@@ -1,32 +1,71 @@
 let vertexShaderSource = `#version 300 es
-// an attribute is an input (in) to a vertex shader
-// it will receive data from a buffer
 in vec2 a_position;
+in vec2 a_texCoord;
+
 uniform vec2 u_resolution;
+
+// pass the texture coordinates to fragment shader
+out vec2 v_texCoord;
 
 // all shaders have a main function
 void main() {
+  // convert position from pixels to 0.0 -> 1.0
   vec2 zeroToOne = a_position / u_resolution;
+
+  // convert from 0->1 to 0->2
   vec2 zeroToTwo = zeroToOne * 2.0;
+
+  // convert from 0->2 to -1->+1 (clip space)
   vec2 clipSpace = zeroToTwo - 1.0;
 
   // gl_Position is a special variable a vertex shader is responsible for setting
   gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+
+  // pass to fragment shader, GPU will interpolate this value between points
+  v_texCoord = a_texCoord;
 }
 `;
 
 let fragmentShaderSource = `#version 300 es
 // fragment shaders don't have a default precision so we need to pick one. highp (high precision) is a good default
 precision highp float;
-uniform vec4 u_color;
+
+// our texture
+uniform sampler2D u_image;
+
+// the texCoords passed from vertex shader
+in vec2 v_texCoord;
 
 // declare an output for the fragment shader
 out vec4 outColor;
 
 void main() {
-  outColor = u_color;
+  outColor = texture(u_image, v_texCoord);
 }
 `;
+
+const toDataURL = (url, callback) => {
+  let xhr = new XMLHttpRequest();
+  xhr.onload = function() {
+    let reader = new FileReader();
+    reader.onloadend = function() {
+      callback(reader.result);
+    }
+    reader.readAsDataURL(xhr.response);
+  }
+  xhr.open('GET', url);
+  xhr.responseType = "blob";
+  xhr.send();
+}
+
+let image = new Image();
+toDataURL("https://webgl2fundamentals.org/webgl/resources/leaves.jpg", (base64String) => {
+  console.log(base64String);
+  image.src = base64String;
+  image.onload = function() {
+    render(image);
+  }
+});
 
 const createShader = (gl, type, source) => {
   let shader = gl.createShader(type);
@@ -57,7 +96,7 @@ const createProgram = (gl, vertexShader, fragmentShader) => {
   return undefined;
 }
 
-const main = () => {
+const render = (image) => {
   const canvas = document.querySelector("#c");
 
   const canvasToDisplaySizeMap = new Map([[canvas, [1000, 800]]]);
@@ -124,10 +163,11 @@ const main = () => {
 
   // lookup where vertex data needs to go
   let positionAttributeLocation = gl.getAttribLocation(program, "a_position");
+  let texCoordAttributeLocation = gl.getAttribLocation(program, "a_texCoord");
 
   // lookup uniform locations
   let resolutionUniformLocation = gl.getUniformLocation(program, "u_resolution");
-  let colorLocation = gl.getUniformLocation(program, "u_color");
+  let imageLocation = gl.getUniformLocation(program, "u_image");
 
   // create a buffer
   let positionBuffer = gl.createBuffer();
@@ -145,6 +185,43 @@ const main = () => {
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
 
   gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+  // provide texture coordinates for the rectangle
+  let texCoordBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    0.0, 0.0,
+    1.0, 0.0,
+    0.0, 1.0,
+    0.0, 1.0,
+    1.0, 0.0,
+    1.0, 1.0,
+  ]), gl.STATIC_DRAW);
+
+  gl.enableVertexAttribArray(texCoordAttributeLocation);
+  gl.vertexAttribPointer(texCoordAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+  // create a texture
+  let texture = gl.createTexture();
+
+  // make unit 0 the active texture unit
+  // i.e. the unit all other texture commands will affect
+  gl.activeTexture(gl.TEXTURE0 + 0)
+
+  // bind it to texture 0' 2D bind point
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+  // upload the image to texture
+  // let mipLevel = 0; // the largest mip
+  // let internalFormat = gl.RGBA; // format we want in the texture
+  // let srcFormat = gl.RGBA; // format of data we are supplying
+  // let srcType = gl.UNSIGNED_BYTE; // type of data we are supplying
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
 
   resizeCanvasToDisplaySize(gl.canvas);
   gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
@@ -173,21 +250,17 @@ const main = () => {
   // pass the canvas resolution so we can convert from pixels to clipspace in the shader
   gl.uniform2f(resolutionUniformLocation, gl.canvas.width, gl.canvas.height);
 
-  // draw 50 random rectangles in random colors
-  for (let ii = 0; ii < 50; ++ii) {
-    // put a rectangle in the position buffer
-    setRectangle(gl, randomInt(700), randomInt(700), randomInt(800), randomInt(800));
+  // tell the shader to get the texture from texture unit 0
+  gl.uniform1i(imageLocation, 0);
 
-    // set a random color
-    gl.uniform4f(colorLocation, Math.random(), Math.random(), Math.random(), 1);
+  // bind the position so gl.bufferData in setRectangle puts data in positionBuffer
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
 
-    // draw the rectangle
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-  }
+  // sets a rectangle the same size as the image
+  setRectangle(gl, 0, 0, image.width, image.height);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
-
-// returns a randome integer from 0 to range - 1
-const randomInt = range => Math.floor(Math.random() * range);
 
 // fill the buffer with the values that define a rectangle
 const setRectangle = (gl, x, y, width, height) => {
@@ -205,4 +278,3 @@ const setRectangle = (gl, x, y, width, height) => {
   ]), gl.STATIC_DRAW);
 }
 
-main();
