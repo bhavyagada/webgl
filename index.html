@@ -8,12 +8,37 @@
       html, body {
         margin: 0 !important;
         padding: 0 !important;
+        overflow: hidden;
+      }
+      canvas {
+        width: 100vw;
+        height: 100vh;
+        display: block;
+      }
+      .container { 
+        position: relative;
+      }
+      #feats-overlay {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+        background-color: white;
+        color: black;
+        font-family: monospace;
+        padding: 1em;
       }
     </style>
   </head>
   <body>
     <script>0</script>
-    <canvas id="c"></canvas>
+    <div class="container">
+      <canvas id="c"></canvas>
+      <div id="feats-overlay">
+        <div>paste images</div>
+        <div>drag images</div>
+        <div>undo paste</div>
+      </div>
+    </div>
     <script type="module" src="/main.js"></script>
   </body>
 </html>
