@@ -1,7 +1,8 @@
-import { WebGL2Renderer } from "./core/WebGL2Renderer";
-import { ImageObj } from "./objects/Image";
+import { createRenderer, resizeRenderer, clearRenderer } from "./renderer";
+import { createImage, renderImage } from "./image";
 
 let scene = [];
+let history = [];
 let renderer;
 let mouseX = 0, mouseY = 0;
 let needsRender = true;
@@ -11,7 +12,7 @@ let lastMouseX = 0, lastMouseY = 0;
 
 const init = () => {
   const canvas = document.querySelector("#c");
-  renderer = new WebGL2Renderer(canvas);
+  renderer = createRenderer(canvas);
 
   // add event listeners
   canvas.addEventListener("mousemove", onMouseMove);
@@ -61,7 +62,6 @@ const onMouseDown = () => {
 
 const onMouseUp = () => {
   isDragging = false;
-  selectedImage = null;
 }
 
 const onPaste = (event) => {
@@ -73,9 +73,9 @@ const onPaste = (event) => {
       reader.onload = function(e) {
         const img = new Image();
         img.onload = function() {
-          const image = new ImageObj(img, mouseX, mouseY);
-          image.init(renderer);
+          const image = createImage(renderer, img, mouseX, mouseY);
           scene.push(image);
+          history.push({ type: "add", image: image });
           needsRender = true;
         }
         img.src = e.target.result;
@@ -89,20 +89,45 @@ const onPaste = (event) => {
 
 const onKeyDown = (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "z") {
-    scene.pop();
+    if (history.length === 0) return;
+
+    const lastAction = history.pop();
+    switch (lastAction.type) {
+      case "add":
+        const index = scene.indexOf(lastAction.image);
+        if (index !== -1) {
+          scene.splice(index, 1);
+        }
+        break;
+      case "delete":
+        scene.splice(lastAction.index, 0, lastAction.image);
+        break;
+    }
     needsRender = true;
+  }
+  if (selectedImage) {
+    if (event.key === "Backspace" || event.key === "Delete") {
+      const index = scene.indexOf(selectedImage);
+      if (index !== -1) {
+        history.push({ type: "delete", image: selectedImage, index: index });
+        scene.splice(index, 1);
+        selectedImage = null;
+        needsRender = true;
+      }
+    }
   }
 }
 
 const onResize = () => {
-  if (renderer.resizeCanvasToDisplaySize(renderer.canvas)) {
+  if (resizeRenderer(renderer)) {
     needsRender = true;
   }
 }
 
 const render = () => {
   if (needsRender) {
-    renderer.render(scene);
+    clearRenderer(renderer);
+    scene.forEach(object => renderImage(renderer, object));
     needsRender = false;
   }
   requestAnimationFrame(render);
