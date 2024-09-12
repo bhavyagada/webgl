@@ -1,4 +1,6 @@
-export const createShader = (gl, type, source) => {
+import { imageVertexShader, imageFragmentShader } from "./shaders";
+
+const createShader = (gl, type, source) => {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
@@ -6,20 +8,28 @@ export const createShader = (gl, type, source) => {
   if (success) return shader;
   console.log(gl.getShaderInfoLog(shader));
   gl.deleteShader(shader);
+  return null;
 }
 
-export const createProgram = (gl, vertexShader, fragmentShader) => {
+const createProgram = (gl, vertexShader, fragmentShader) => {
   let program = gl.createProgram();
   gl.attachShader(program, vertexShader);
   gl.attachShader(program, fragmentShader);
   gl.linkProgram(program);
   let success = gl.getProgramParameter(program, gl.LINK_STATUS);
-  if (success) {
-    return program;
-  }
-
+  if (success) return program;
   console.log(gl.getProgramInfoLog(program));
   gl.deleteProgram(program);
-  return undefined;
+  return null;
 }
 
+export const createProgramFromShaders = (gl) => {
+  const vertexShader = createShader(gl, gl.VERTEX_SHADER, imageVertexShader);
+	const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, imageFragmentShader);
+	const program = createProgram(gl, vertexShader, fragmentShader);
+	if (!program) {
+		console.error("Failed to create shader program");
+		return null;
+	}
+  return program
+}
