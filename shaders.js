@@ -5,13 +5,13 @@ export const imageVertexShader = `#version 300 es
   uniform vec2 u_resolution;
   uniform vec2 u_position;
   uniform vec2 u_size;
-  uniform float is_image;
+  uniform bool is_image;
 
   out vec2 v_texCoord;
 
   void main() {
     vec2 final_position;
-    if (is_image == 1.0) {
+    if (is_image) {
       final_position = a_position;
     } else {
       final_position = a_position * u_size + u_position;
@@ -32,12 +32,12 @@ export const imageFragmentShader = `#version 300 es
 
   uniform sampler2D u_image;
   uniform vec4 u_color;
-  uniform float is_image;
+  uniform bool is_image;
 
   out vec4 outColor;
 
   void main() {
-    if (is_image == 1.0) {
+    if (is_image) {
       outColor = texture(u_image, v_texCoord);
     } else {
       outColor = u_color;
