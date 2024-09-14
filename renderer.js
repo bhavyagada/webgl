@@ -17,14 +17,6 @@ export const createRenderer = (canvas, gl) => {
   gl.enableVertexAttribArray(positionAttribLocation);
 
   gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-    0.0, 0.0,
-    1.0, 0.0,
-    0.0, 1.0,
-    0.0, 1.0,
-    1.0, 0.0,
-    1.0, 1.0
-  ]), gl.STATIC_DRAW);
   gl.vertexAttribPointer(texCoordAttribLocation, 2, gl.FLOAT, false, 0, 0);
   gl.enableVertexAttribArray(texCoordAttribLocation);
   gl.bindVertexArray(null);
@@ -67,50 +59,64 @@ export const clearRenderer = (renderer) => {
 };
 
 export const createToolbar = (gl) => {
-  const texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
-
   return {
-    texture,
-    width: 40,
-    height: 40,
-    gap: 10
+    buttonWidth: 30,
+    buttonHeight: 30,
+    gap: 10,
+    buttonTextures: []
   };
 };
 
-export const loadToolbarTexture = (gl, toolbar, imageSrc) => {
-  return new Promise((resolve) => {
-    const image = new Image();
-    image.onload = () => {
-      gl.bindTexture(gl.TEXTURE_2D, toolbar.texture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-      gl.generateMipmap(gl.TEXTURE_2D);
-      resolve();
-    };
-    image.src = imageSrc;
-  });
+export const loadToolbarTexture = (gl, imageSources) => {
+  return Promise.all(imageSources.map(src => {
+    return new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => {
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        resolve(texture);
+      };
+      image.src = src;
+    });
+  }));
 };
 
-export const renderToolbar = (gl, positionBuffer, uniforms, toolbar, image) => {
-  const toolbarX = image.x - toolbar.width / 2;
-  const toolbarY = image.y - image.height / 2 - toolbar.height - toolbar.gap;
+export const renderToolbar = (gl, program, vao, positionBuffer, texCoordBuffer, uniforms, toolbar, image) => {
+  const toolbarY = image.y - image.height / 2 - toolbar.buttonHeight - toolbar.gap;
+  
+  gl.bindVertexArray(vao);
+  toolbar.buttonTextures.forEach((texture, index) => {
+    const toolbarX = image.x - (toolbar.buttonTextures.length * toolbar.buttonWidth + (toolbar.buttonTextures.length - 1) * toolbar.gap) / 2 + index * (toolbar.buttonWidth + toolbar.gap);
 
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, toolbar.texture);
-  gl.uniform1i(uniforms.image, 0);
-  gl.uniform1i(uniforms.isImage, true);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.uniform1i(uniforms.image, 0);
+    gl.uniform1i(uniforms.isImage, true);
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-    toolbarX, toolbarY,
-    toolbarX + toolbar.width, toolbarY,
-    toolbarX, toolbarY + toolbar.height,
-    toolbarX, toolbarY + toolbar.height,
-    toolbarX + toolbar.width, toolbarY,
-    toolbarX + toolbar.width, toolbarY + toolbar.height
-  ]), gl.STATIC_DRAW);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      toolbarX, toolbarY,
+      toolbarX + toolbar.buttonWidth, toolbarY,
+      toolbarX, toolbarY + toolbar.buttonHeight,
+      toolbarX, toolbarY + toolbar.buttonHeight,
+      toolbarX + toolbar.buttonWidth, toolbarY,
+      toolbarX + toolbar.buttonWidth, toolbarY + toolbar.buttonHeight
+    ]), gl.STATIC_DRAW);
+
+    // Use non-flipped texture coordinates for toolbar buttons
+    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      0.0, 0.0,
+      1.0, 0.0,
+      0.0, 1.0,
+      0.0, 1.0,
+      1.0, 0.0,
+      1.0, 1.0
+    ]), gl.STATIC_DRAW);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  });
 };
 
 export const createImage = (renderer, imageElement, x, y) => {
@@ -130,11 +136,12 @@ export const createImage = (renderer, imageElement, x, y) => {
     y,
     width: imageElement.width,
     height: imageElement.height,
+    flipped: false
   };
 };
 
-export const renderImage = (renderer, image, isSelected) => {
-  const { gl, program, vao, uniforms, positionBuffer, toolbarTexture } = renderer;
+export const renderImage = (renderer, image, isSelected, toolbar) => {
+  const { gl, program, vao, uniforms, positionBuffer, texCoordBuffer } = renderer;
 
   gl.useProgram(program);
   gl.uniform2f(uniforms.resolution, gl.canvas.width, gl.canvas.height);
@@ -160,6 +167,24 @@ export const renderImage = (renderer, image, isSelected) => {
 		x1, y2,
 		x2, y1,
 		x2, y2]), gl.STATIC_DRAW);
+  
+  // Update texture coordinates based on flipped state
+  const texCoords = image.flipped
+    ? [1.0, 0.0,
+       0.0, 0.0,
+       1.0, 1.0,
+       1.0, 1.0,
+       0.0, 0.0,
+       0.0, 1.0] 
+    : [0.0, 0.0,
+       1.0, 0.0,
+       0.0, 1.0,
+       0.0, 1.0,
+       1.0, 0.0,
+       1.0, 1.0];
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
+
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 
   // Render border if selected
@@ -169,6 +194,7 @@ export const renderImage = (renderer, image, isSelected) => {
     gl.uniform2f(uniforms.position, image.x, image.y);
     gl.uniform2f(uniforms.size, image.width + 4, image.height + 4);
 
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
 			-0.5, -0.5,
 			0.5, -0.5,
@@ -178,15 +204,34 @@ export const renderImage = (renderer, image, isSelected) => {
     gl.drawArrays(gl.LINE_LOOP, 0, 4);
 
     // Render toolbar
-    renderToolbar(gl, positionBuffer, uniforms, toolbar, image);
+    if (toolbar && toolbar.buttonTextures.length > 0) {
+      renderToolbar(gl, program, vao, positionBuffer, texCoordBuffer, uniforms, toolbar, image);
+    }
   }
 
   gl.bindVertexArray(null);
 };
 
 export const isPointInToolbar = (x, y, toolbar, image) => {
-  const toolbarX = image.x - toolbar.width / 2;
-  const toolbarY = image.y - image.height / 2 - toolbar.height - toolbar.gap;
+  const toolbarY = image.y - image.height / 2 - toolbar.buttonHeight - toolbar.gap;
+  const toolbarWidth = toolbar.buttonTextures.length * toolbar.buttonWidth + (toolbar.buttonTextures.length - 1) * toolbar.gap;
+  const toolbarX = image.x - toolbarWidth / 2;
 
-  return x >= toolbarX && x <= toolbarX + toolbar.width && y >= toolbarY && y <= toolbarY + toolbar.height;
+  return x >= toolbarX && x <= toolbarX + toolbarWidth && y >= toolbarY && y <= toolbarY + toolbar.buttonHeight;
+};
+
+export const getClickedButton = (x, y, toolbar, image) => {
+  const toolbarY = image.y - image.height / 2 - toolbar.buttonHeight - toolbar.gap;
+  const toolbarWidth = toolbar.buttonTextures.length * toolbar.buttonWidth + (toolbar.buttonTextures.length - 1) * toolbar.gap;
+  const toolbarX = image.x - toolbarWidth / 2;
+
+  if (y >= toolbarY && y <= toolbarY + toolbar.buttonHeight) {
+    for (let i = 0; i < toolbar.buttonTextures.length; i++) {
+      const buttonX = toolbarX + i * (toolbar.buttonWidth + toolbar.gap);
+      if (x >= buttonX && x <= buttonX + toolbar.buttonWidth) {
+        return i;
+      }
+    }
+  }
+  return -1;
 };
