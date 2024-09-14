@@ -6,22 +6,21 @@ export const imageVertexShader = `#version 300 es
   uniform vec2 u_position;
   uniform vec2 u_size;
   uniform bool is_image;
+  uniform bool u_flipX;
 
   out vec2 v_texCoord;
 
   void main() {
-    vec2 final_position;
-    if (is_image) {
-      final_position = a_position;
-    } else {
-      final_position = a_position * u_size + u_position;
-    }
-
+    vec2 final_position = a_position * u_size + u_position;
     vec2 zero_to_one = final_position / u_resolution;
     vec2 zero_to_two = zero_to_one * 2.0;
     vec2 clip_space = zero_to_two - 1.0;
     gl_Position = vec4(clip_space * vec2(1, -1), 0, 1);
+    
     v_texCoord = a_texCoord;
+    if (u_flipX) {
+      v_texCoord.x = 1.0 - v_texCoord.x;
+    }
   }
 `;
 

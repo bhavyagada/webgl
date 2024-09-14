@@ -72,8 +72,7 @@ const loadImage = (url) => {
 const getImageAtPosition = (x, y) => {
   for (let i = scene.length - 1; i >= 0; i--) {
     const img = scene[i];
-    if (x >= img.x - img.width / 2 && x <= img.x + img.width / 2 &&
-      y >= img.y - img.height / 2 && y <= img.y + img.height / 2) {
+    if (x >= img.x - img.width / 2 && x <= img.x + img.width / 2 && y >= img.y - img.height / 2 && y <= img.y + img.height / 2) {
       return img;
     }
   }
@@ -101,12 +100,10 @@ const handleInteraction = (x, y, isStart) => {
           break;
         case 2: // Duplicate
           console.log("duplicate button clicked!!");
-          const dupImage = { ...selectedImage };
-          dupImage.x += 20;
-          dupImage.y += 20;
-          selectedImage = dupImage;
+          const dupImage = { ...selectedImage, x: selectedImage.x + 20, y: selectedImage.y + 20 };
           scene.push(dupImage);
           history.push({ type: 'add', image: dupImage });
+          selectedImage = dupImage;
           needsRender = true;
           break;
       }
@@ -166,12 +163,7 @@ const onTouchEnd = (event) => {
   event.preventDefault();
   isDragging = false;
   if (selectedImage && (selectedImage.x !== selectedImage.initialX || selectedImage.y !== selectedImage.initialY)) {
-    history.push({
-      type: 'move',
-      image: selectedImage,
-      fromX: selectedImage.initialX,
-      fromY: selectedImage.initialY
-    });
+    history.push({ type: 'move', image: selectedImage, fromX: selectedImage.initialX, fromY: selectedImage.initialY });
   }
 };
 
@@ -194,12 +186,7 @@ const onMouseDown = (event) => {
 const onMouseUp = () => {
   isDragging = false;
   if (selectedImage && (selectedImage.x !== selectedImage.initialX || selectedImage.y !== selectedImage.initialY)) {
-    history.push({
-      type: 'move',
-      image: selectedImage,
-      fromX: selectedImage.initialX,
-      fromY: selectedImage.initialY
-    });
+    history.push({ type: 'move', image: selectedImage, fromX: selectedImage.initialX, fromY: selectedImage.initialY });
   }
 };
 
@@ -218,7 +205,7 @@ const onPaste = (event) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         const img = new Image();
-        img.onload = function () {
+        img.onload = () => {
           const image = createImage(renderer, img, mouseX, mouseY);
           scene.push(image);
           history.push({ type: 'add', image: image });
