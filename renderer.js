@@ -64,17 +64,8 @@ export const resizeRenderer = (renderer) => {
 
 export const clearRenderer = (renderer) => {
   const { gl } = renderer;
-  gl.clearColor(0.1, 0.1, 0.1, 1.0);
+  gl.clearColor(0.2, 0.2, 0.2, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-};
-
-export const createToolbar = (gl) => {
-  return {
-    buttonWidth: 30,
-    buttonHeight: 30,
-    gap: 10,
-    buttonTextures: []
-  };
 };
 
 export const loadToolbarTexture = (gl, imageSources) => Promise.all(imageSources.map(src => {
@@ -95,7 +86,7 @@ export const renderToolbar = (gl, uniforms, toolbar, image) => {
   const toolbarY = image.y - image.height / 2 - toolbar.buttonHeight - toolbar.gap;
   
   toolbar.buttonTextures.forEach((texture, index) => {
-    const toolbarX = image.x - (toolbar.buttonTextures.length * toolbar.buttonWidth + (toolbar.buttonTextures.length - 1) * toolbar.gap) / 2 + index * (toolbar.buttonWidth + toolbar.gap);
+    const toolbarX = image.x - (toolbar.buttonTextures.length * toolbar.buttonWidth) / 2 + index * toolbar.buttonWidth;
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -121,6 +112,7 @@ export const createImage = (renderer, imageElement, x, y) => {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imageElement);
 
   return {
+    imageElement,
     texture,
     x,
     y,
@@ -190,7 +182,7 @@ export const renderImage = (renderer, image, isSelected, toolbar) => {
 
 export const isPointInToolbar = (x, y, toolbar, image) => {
   const toolbarY = image.y - image.height / 2 - toolbar.buttonHeight - toolbar.gap;
-  const toolbarWidth = toolbar.buttonTextures.length * toolbar.buttonWidth + (toolbar.buttonTextures.length - 1) * toolbar.gap;
+  const toolbarWidth = toolbar.buttonTextures.length * toolbar.buttonWidth;
   const toolbarX = image.x - toolbarWidth / 2;
 
   return x >= toolbarX && x <= toolbarX + toolbarWidth && y >= toolbarY && y <= toolbarY + toolbar.buttonHeight;
@@ -198,12 +190,12 @@ export const isPointInToolbar = (x, y, toolbar, image) => {
 
 export const getClickedButton = (x, y, toolbar, image) => {
   const toolbarY = image.y - image.height / 2 - toolbar.buttonHeight - toolbar.gap;
-  const toolbarWidth = toolbar.buttonTextures.length * toolbar.buttonWidth + (toolbar.buttonTextures.length - 1) * toolbar.gap;
+  const toolbarWidth = toolbar.buttonTextures.length * toolbar.buttonWidth;
   const toolbarX = image.x - toolbarWidth / 2;
 
   if (y >= toolbarY && y <= toolbarY + toolbar.buttonHeight) {
     for (let i = 0; i < toolbar.buttonTextures.length; i++) {
-      const buttonX = toolbarX + i * (toolbar.buttonWidth + toolbar.gap);
+      const buttonX = toolbarX + i * (toolbar.buttonWidth);
       if (x >= buttonX && x <= buttonX + toolbar.buttonWidth) {
         return i;
       }

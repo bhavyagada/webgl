@@ -1,7 +1,8 @@
-import { createRenderer, resizeRenderer, clearRenderer, createToolbar, loadToolbarTexture, createImage, renderImage, isPointInToolbar, getClickedButton } from './renderer';
-import backIcon from './icons/moveback.png';
+import { createRenderer, resizeRenderer, clearRenderer, loadToolbarTexture, createImage, renderImage, isPointInToolbar, getClickedButton } from './renderer';
+import backIcon from './icons/moveback.svg';
 import flipIcon from './icons/flip.png';
 import duplicateIcon from './icons/duplicate.png';
+import segmentIcon from './icons/segment.png';
 
 let scene = [];
 let history = [];
@@ -16,16 +17,17 @@ let lastMouseY = 0;
 let panOffsetX = 0;
 let panOffsetY = 0;
 let toolbar;
+let model;
 
 export const init = () => {
   const canvas = document.querySelector("#c");
   const gl = canvas.getContext("webgl2");
   if (!gl) throw new Error("WebGL2 not supported!");
   renderer = createRenderer(canvas, gl);
-  toolbar = createToolbar(gl);
+  toolbar = { buttonWidth: 35, buttonHeight: 35, gap: 15, buttonTextures: [] };
 
   // Load toolbar texture
-  loadToolbarTexture(gl, [backIcon, flipIcon, duplicateIcon]).then((textures) => {
+  loadToolbarTexture(gl, [backIcon, flipIcon, duplicateIcon, segmentIcon]).then((textures) => {
     toolbar.buttonTextures = textures;
     needsRender = true;
   });
@@ -44,8 +46,11 @@ export const init = () => {
 
   // loadImage('https://valorvinyls.com/cdn/shop/files/StayHardGoggins.jpg?v=1707978088');
   loadImage('https://www.jockostore.com/cdn/shop/t/33/assets/popup-image.jpg?v=142777728587095439201637241641');
+
   onResize();
   render();
+
+  loadSegmentationModel();
 };
 
 const loadImage = (url) => {
@@ -79,6 +84,65 @@ const getImageAtPosition = (x, y) => {
   return null;
 };
 
+const loadSegmentationModel = async () => {
+  try {
+    model = await deeplab.load({ base: 'pascal', quantizationBytes: 4 });
+    console.log('DeepLab model loaded successfully');
+  } catch (error) {
+    console.error('Failed to load DeepLab model:', error);
+  }
+}
+
+const segmentImage = async (image) => {
+  if (!model) {
+    console.error('DeepLab model not loaded');
+    return;
+  }
+
+  const prediction = await model.segment(image.imageElement);
+  const { legend, height, width, segmentationMap } = prediction;
+
+  // Create separate images for each segmented part
+  Object.keys(legend).forEach((objectName) => {
+    const [r, g, b] = legend[objectName];
+    const segmentCanvas = document.createElement('canvas');
+    segmentCanvas.width = width;
+    segmentCanvas.height = height;
+    const ctx = segmentCanvas.getContext('2d');
+
+    // Draw the original image
+    ctx.drawImage(image.imageElement, 0, 0, width, height);
+
+    // Get image data
+    const imageData = ctx.getImageData(0, 0, width, height);
+
+    // Mask out everything except the current segment
+    for (let i = 0; i < segmentationMap.length; i += 4) {
+      if (segmentationMap[i] !== r || segmentationMap[i+1] !== g || segmentationMap[i+2] !== b) {
+        imageData.data[i+3] = 0; // Set alpha to 0 for non-matching pixels
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    // Create a new image object for this segment
+    const segmentImg = new Image();
+    segmentImg.onload = () => {
+      const segmentedImage = createImage(renderer, segmentImg, image.x, image.y);
+      scene.push(segmentedImage);
+      needsRender = true;
+    };
+    segmentImg.src = segmentCanvas.toDataURL();
+  });
+
+  // Remove the original image from the scene
+  const index = scene.indexOf(image);
+  if (index !== -1) {
+    scene.splice(index, 1);
+    needsRender = true;
+  }
+}
+
 const handleInteraction = (x, y, isStart) => {
   if (isStart) {
     isDragging = true;
@@ -105,6 +169,10 @@ const handleInteraction = (x, y, isStart) => {
           history.push({ type: 'add', image: dupImage });
           selectedImage = dupImage;
           needsRender = true;
+          break;
+        case 3: // Segment
+          console.log("segmentation button clicked!");
+          segmentImage(selectedImage);
           break;
       }
       needsRender = true;
@@ -171,6 +239,11 @@ const onMouseMove = (event) => {
   const rect = event.target.getBoundingClientRect();
   mouseX = event.clientX - rect.left;
   mouseY = event.clientY - rect.top;
+  if (selectedImage && isPointInToolbar(mouseX, mouseY, toolbar, selectedImage)) {
+    const i = getClickedButton(mouseX, mouseY, toolbar, selectedImage)
+    console.log(i);
+    needsRender = true;
+  }
   handleInteraction(mouseX, mouseY, false);
 };
 
