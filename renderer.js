@@ -210,6 +210,28 @@ export const renderImage = (renderer, image, isSelected, toolbar) => {
     gl.uniform2f(uniforms.size, 0, halfHeight);
     gl.drawArrays(gl.LINES, 1, 2);
 
+    // Render resize handles
+    const handleSize = 5;
+    gl.uniform4fv(uniforms.color, [1, 1, 1, 1]);
+
+    const renderHandle = (x, y) => {
+      gl.uniform2f(uniforms.position, x, y);
+      gl.uniform2f(uniforms.size, handleSize, handleSize);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    };
+
+    // Corner handles
+    renderHandle(image.x - halfWidth, image.y - halfHeight);
+    renderHandle(image.x + halfWidth, image.y - halfHeight);
+    renderHandle(image.x - halfWidth, image.y + halfHeight);
+    renderHandle(image.x + halfWidth, image.y + halfHeight);
+
+    // Middle handles
+    renderHandle(image.x, image.y - halfHeight);
+    renderHandle(image.x, image.y + halfHeight);
+    renderHandle(image.x - halfWidth, image.y);
+    renderHandle(image.x + halfWidth, image.y);
+
     // Render toolbar
     if (toolbar && toolbar.buttonTextures.length > 0) {
       renderToolbar(gl, uniforms, toolbar, image);

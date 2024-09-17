@@ -4,6 +4,9 @@ import flipIcon from './icons/flip.png';
 import duplicateIcon from './icons/duplicate.png';
 import segmentIcon from './icons/segment.png';
 
+const worker = new Worker('worker.js', { type: 'module' });
+const toolbar = { buttonWidth: 35, buttonHeight: 35, gap: 15, buttonTextures: [] };
+
 let scene = [];
 let history = [];
 let renderer;
@@ -12,26 +15,45 @@ let mouseY = 0;
 let needsRender = true;
 let selectedImage = null;
 let isDragging = false;
+let isResizing = false;
+let resizeHandle = '';
 let lastMouseX = 0;
 let lastMouseY = 0;
 let panOffsetX = 0;
 let panOffsetY = 0;
-let toolbar;
 
 // SAM State variables
-let worker = new Worker('worker.js', { type: 'module' });
 let isSegmenting = false;
 let currentMask = null;
 let isDecoding = false;
+let isEmbeddingInProgress = false;
+
+worker.onmessage = (e) => {
+  const { type, data } = e.data;
+  if (type === 'ready') {
+    console.log('model loaded successfully');
+  } else if (type === 'segment_result') {
+    if (data === 'start') {
+      console.log('Extracting image embedding...');
+      isEmbeddingInProgress = true;
+      document.body.style.cursor = 'wait';
+    } else {
+      console.log('Embedding extracted!');
+      isEmbeddingInProgress = false;
+      document.body.style.cursor = 'default';
+      needsRender = true;
+    }
+  } else if (type === 'decode_result') {
+    handleDecodeResult(data);
+  }
+};
 
 export const init = () => {
   const canvas = document.querySelector("#c");
   const gl = canvas.getContext("webgl2");
   if (!gl) throw new Error("WebGL2 not supported!");
   renderer = createRenderer(canvas, gl);
-  toolbar = { buttonWidth: 35, buttonHeight: 35, gap: 15, buttonTextures: [] };
 
-  // Load toolbar texture
   loadToolbarTexture(gl, [backIcon, flipIcon, duplicateIcon, segmentIcon]).then((textures) => {
     toolbar.buttonTextures = textures;
     needsRender = true;
@@ -49,16 +71,6 @@ export const init = () => {
   document.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', onResize);
 
-  // loadImage('https://valorvinyls.com/cdn/shop/files/StayHardGoggins.jpg?v=1707978088');
-  loadImage('https://www.jockostore.com/cdn/shop/t/33/assets/popup-image.jpg?v=142777728587095439201637241641');
-
-  onResize();
-  render();
-
-  loadSegmentationModel();
-};
-
-const loadImage = (url) => {
   const img = new Image();
 	const xhr = new XMLHttpRequest();
 	xhr.onload = () => {
@@ -74,38 +86,46 @@ const loadImage = (url) => {
 		};
     reader.readAsDataURL(xhr.response);
   };
-	xhr.open('GET', url);
+	xhr.open('GET', 'https://www.jockostore.com/cdn/shop/t/33/assets/popup-image.jpg?v=142777728587095439201637241641');
   xhr.responseType = 'blob';
   xhr.send();
+
+  onResize();
+  render();
 };
 
 const getImageAtPosition = (x, y) => {
+  const handleSize = 10;
   for (let i = scene.length - 1; i >= 0; i--) {
     const img = scene[i];
-    if (x >= img.x - img.width / 2 && x <= img.x + img.width / 2 && y >= img.y - img.height / 2 && y <= img.y + img.height / 2) {
+    if (x >= img.x - img.width / 2 - handleSize / 2 && x <= img.x + img.width / 2 + handleSize / 2 && 
+      y >= img.y - img.height / 2 - handleSize / 2 && y <= img.y + img.height / 2 + handleSize / 2) {
       return img;
     }
   }
   return null;
 };
 
-const loadSegmentationModel = async () => {
-  worker.onmessage = (e) => {
-    const { type, data } = e.data;
-    if (type === 'ready') {
-      console.log('model loaded successfully');
-    } else if (type === 'segment_result') {
-      if (data === 'start') {
-        console.log('Extracting image embedding...');
-      } else {
-        console.log('Embedding extracted!');
-        // isSegmenting = true;
-        needsRender = true;
-      }
-    } else if (type === 'decode_result') {
-      handleDecodeResult(data);
-    }
-  };
+const getResizeHandle = (x, y, image) => {
+  const handleSize = 10;
+  const left = image.x - image.width / 2;
+  const right = image.x + image.width / 2;
+  const top = image.y - image.height / 2;
+  const bottom = image.y + image.height / 2;
+
+  if (Math.abs(x - left) < handleSize) {
+    if (Math.abs(y - top) < handleSize) return 'nw';
+    if (Math.abs(y - bottom) < handleSize) return 'sw';
+    if (y > top && y < bottom) return 'w';
+  }
+  if (Math.abs(x - right) < handleSize) {
+    if (Math.abs(y - top) < handleSize) return 'ne';
+    if (Math.abs(y - bottom) < handleSize) return 'se';
+    if (y > top && y < bottom) return 'e';
+  }
+  if (Math.abs(y - top) < handleSize && x > left && x < right) return 'n';
+  if (Math.abs(y - bottom) < handleSize && x > left && x < right) return 's';
+  return '';
 };
 
 const handleDecodeResult = (data) => {
@@ -156,7 +176,6 @@ const segmentImage = async (image) => {
     console.error('model not loaded');
     return;
   }
-  // isSegmenting = true;
 
   // Convert image to data URL
   const canvas = document.createElement('canvas');
@@ -176,8 +195,8 @@ const handleInteraction = (x, y, isStart) => {
     lastMouseX = x;
     lastMouseY = y;
 
-    if (selectedImage && isPointInToolbar(x, y, toolbar, selectedImage, 3)) {
-      const clickedButton = getClickedButton(x, y, toolbar, selectedImage, 3);
+    if (selectedImage && isPointInToolbar(x, y, toolbar, selectedImage)) {
+      const clickedButton = getClickedButton(x, y, toolbar, selectedImage);
       switch (clickedButton) {
         case 0: // Move back
           console.log("move back button clicked!!");
@@ -199,7 +218,6 @@ const handleInteraction = (x, y, isStart) => {
           break;
         case 3: // Segment
           console.log("segmentation button clicked!");
-          // segmentImage(selectedImage);
           isSegmenting = true;
           break;
       }
@@ -213,8 +231,18 @@ const handleInteraction = (x, y, isStart) => {
       if (selectedImage) {
         selectedImage.initialX = selectedImage.x;
         selectedImage.initialY = selectedImage.y;
+        selectedImage.initialWidth = selectedImage.width;
+        selectedImage.initialHeight = selectedImage.height;
       }
       needsRender = true;
+    }
+
+    if (selectedImage) {
+      resizeHandle = getResizeHandle(x, y, selectedImage);
+      if (resizeHandle) {
+        isResizing = true;
+        isDragging = false;
+      }
     }
   } else {
     if (isDragging && selectedImage) {
@@ -222,6 +250,53 @@ const handleInteraction = (x, y, isStart) => {
       const dy = y - lastMouseY;
       selectedImage.x += dx;
       selectedImage.y += dy;
+      needsRender = true;
+    } else if (isResizing && selectedImage) {
+      const dx = x - lastMouseX;
+      const dy = y - lastMouseY;
+      
+      switch (resizeHandle) {
+        case 'nw':
+          selectedImage.x += dx / 2;
+          selectedImage.y += dy / 2;
+          selectedImage.width -= dx;
+          selectedImage.height -= dy;
+          break;
+        case 'n':
+          selectedImage.y += dy / 2;
+          selectedImage.height -= dy;
+          break;
+        case 'ne':
+          selectedImage.x += dx / 2;
+          selectedImage.y += dy / 2;
+          selectedImage.width += dx;
+          selectedImage.height -= dy;
+          break;
+        case 'e':
+          selectedImage.x += dx / 2;
+          selectedImage.width += dx;
+          break;
+        case 'se':
+          selectedImage.x += dx / 2;
+          selectedImage.y += dy / 2;
+          selectedImage.width += dx;
+          selectedImage.height += dy;
+          break;
+        case 's':
+          selectedImage.y += dy / 2;
+          selectedImage.height += dy;
+          break;
+        case 'sw':
+          selectedImage.x += dx / 2;
+          selectedImage.y += dy / 2;
+          selectedImage.width -= dx;
+          selectedImage.height += dy;
+          break;
+        case 'w':
+          selectedImage.x += dx / 2;
+          selectedImage.width -= dx;
+          break;
+      }
       needsRender = true;
     }
 
@@ -258,9 +333,19 @@ const onTouchStart = (event) => {
 const onTouchEnd = (event) => {
   event.preventDefault();
   isDragging = false;
-  if (selectedImage && (selectedImage.x !== selectedImage.initialX || selectedImage.y !== selectedImage.initialY)) {
-    history.push({ type: 'move', image: selectedImage, fromX: selectedImage.initialX, fromY: selectedImage.initialY });
+  isResizing = false;
+  if (selectedImage && (selectedImage.x !== selectedImage.initialX || selectedImage.y !== selectedImage.initialY ||
+      selectedImage.width !== selectedImage.initialWidth || selectedImage.height !== selectedImage.initialHeight)) {
+    history.push({ 
+      type: 'move_resize', 
+      image: selectedImage, 
+      fromX: selectedImage.initialX, 
+      fromY: selectedImage.initialY,
+      fromWidth: selectedImage.initialWidth,
+      fromHeight: selectedImage.initialHeight
+    });
   }
+  document.body.style.cursor = 'default';
 };
 
 const getPoint = (x, y, image) => {
@@ -284,11 +369,45 @@ const onMouseMove = (event) => {
     needsRender = true;
   }
 
-  if (selectedImage && isPointInToolbar(mouseX, mouseY, toolbar, selectedImage)) {
+  if (isEmbeddingInProgress) {
+    document.body.style.cursor = 'wait';
+  } else if (selectedImage && isPointInToolbar(mouseX, mouseY, toolbar, selectedImage)) {
     const i = getClickedButton(mouseX, mouseY, toolbar, selectedImage)
     console.log(i);
+    document.body.style.cursor = 'pointer';
     needsRender = true;
+  } else if (selectedImage) {
+    const handle = getResizeHandle(mouseX, mouseY, selectedImage);
+    if (handle) {
+      switch (handle) {
+        case 'nw':
+        case 'se':
+          document.body.style.cursor = 'nwse-resize';
+          break;
+        case 'ne':
+        case 'sw':
+          document.body.style.cursor = 'nesw-resize';
+          break;
+        case 'n':
+        case 's':
+          document.body.style.cursor = 'ns-resize';
+          break;
+        case 'e':
+        case 'w':
+          document.body.style.cursor = 'ew-resize';
+          break;
+      }
+    } else if (isDragging) {
+      document.body.style.cursor = 'grabbing';
+    } else if (getImageAtPosition(mouseX, mouseY)) {
+      document.body.style.cursor = 'grab';
+    } else {
+      document.body.style.cursor = 'default';
+    }
+  } else {
+    document.body.style.cursor = 'default';
   }
+
   handleInteraction(mouseX, mouseY, false);
 };
 
@@ -303,6 +422,10 @@ const onMouseDown = (event) => {
     isSegmenting = false;
   } else if (handleInteraction(mouseX, mouseY, true)) {
     event.preventDefault();
+  }
+
+  if (isDragging) {
+    document.body.style.cursor = 'grabbing';
   }
 };
 
@@ -385,9 +508,19 @@ const cutMask = () => {
 
 const onMouseUp = () => {
   isDragging = false;
-  if (selectedImage && (selectedImage.x !== selectedImage.initialX || selectedImage.y !== selectedImage.initialY)) {
-    history.push({ type: 'move', image: selectedImage, fromX: selectedImage.initialX, fromY: selectedImage.initialY });
+  isResizing = false;
+  if (selectedImage && (selectedImage.x !== selectedImage.initialX || selectedImage.y !== selectedImage.initialY ||
+      selectedImage.width !== selectedImage.initialWidth || selectedImage.height !== selectedImage.initialHeight)) {
+    history.push({ 
+      type: 'move_resize', 
+      image: selectedImage, 
+      fromX: selectedImage.initialX, 
+      fromY: selectedImage.initialY,
+      fromWidth: selectedImage.initialWidth,
+      fromHeight: selectedImage.initialHeight
+    });
   }
+  document.body.style.cursor = 'default';
 };
 
 const onWheel = (event) => {
@@ -433,9 +566,11 @@ const onKeyDown = (event) => {
       case 'delete':
         scene.splice(lastAction.index, 0, lastAction.image);
         break;
-      case 'move':
+      case 'move_resize':
         lastAction.image.x = lastAction.fromX;
         lastAction.image.y = lastAction.fromY;
+        lastAction.image.width = lastAction.fromWidth;
+        lastAction.image.height = lastAction.fromHeight;
         break;
     }
     needsRender = true;
