@@ -100,6 +100,39 @@ export const renderToolbar = (gl, uniforms, toolbar, image) => {
   });
 };
 
+export const renderMask = (renderer, image) => {
+  const { gl, program, vao, uniforms } = renderer;
+
+  gl.useProgram(program);
+  gl.uniform2f(uniforms.resolution, gl.canvas.width, gl.canvas.height);
+  gl.bindVertexArray(vao);
+
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  // Create a texture from the mask canvas
+  const maskTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, maskTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image.maskCanvas);
+
+  // Render the mask
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, maskTexture);
+  gl.uniform1i(uniforms.image, 0);
+  gl.uniform1i(uniforms.isImage, 1);
+  gl.uniform2f(uniforms.position, image.x, image.y);
+  gl.uniform2f(uniforms.size, image.width / 2, image.height / 2);
+  gl.uniform1i(uniforms.flipX, image.flipped ? 1 : 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  gl.disable(gl.BLEND);
+  gl.bindVertexArray(null);
+};
+
 export const createImage = (renderer, imageElement, x, y) => {
   const { gl } = renderer;
   const texture = gl.createTexture();
@@ -129,6 +162,10 @@ export const renderImage = (renderer, image, isSelected, toolbar) => {
   gl.uniform2f(uniforms.resolution, gl.canvas.width, gl.canvas.height);
   gl.bindVertexArray(vao);
 
+  // Enable blending for transparent images
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
   // Render image
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, image.texture);
@@ -138,6 +175,9 @@ export const renderImage = (renderer, image, isSelected, toolbar) => {
   gl.uniform2f(uniforms.size, image.width / 2, image.height / 2);
   gl.uniform1i(uniforms.flipX, image.flipped ? 1 : 0);
   gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  // Disable blending after rendering the image
+  gl.disable(gl.BLEND);
 
   // Render border if selected
   if (isSelected) {
