@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Learning WebGL</title>
+    <title>imged</title>
+    <link rel="icon" type="image/x-icon" href="./icons/favicon.ico">
     <style>
       html, body {
         margin: 0 !important;
@@ -25,7 +26,12 @@
         background-color: white;
         color: black;
         font-family: monospace;
-        padding: 0.75em;
+        padding: 0.5em;
+      }
+      .icon-text {
+        display: flex;
+        align-items: center;
+        gap: 8px
       }
     </style>
   </head>
@@ -34,17 +40,12 @@
     <div class="container">
       <canvas id="c"></canvas>
       <div id="feats-overlay">
-        <div><b>Images</b></div>
-        <div>- paste</div>
-        <div>- pan & drag</div>
-        <div>- resize</div>
-        <div>- delete selected</div>
-        <div>- undo (incomplete)</div>
-        <div><b>Toolbar</b></div>
-        <div>- move to back</div>
-        <div>- flip</div>
-        <div>- duplicate</div>
-        <div>- segmentation</div>
+        <div class="icon-text"><img src="./icons/moveback.svg" width="15" height="15"> move to back</div>
+        <div class="icon-text"><img src="./icons/flip.svg" width="15" height="15"> flip</div>
+        <div class="icon-text"><img src="./icons/duplicate.svg" width="15" height="15"> duplicate</div>
+        <div class="icon-text"><img src="./icons/segment.svg" width="15" height="15"> segment</div>
+        <div class="icon-text"><img src="./icons/download.svg" width="15" height="15"> download</div>
+        <div class="icon-text"><img src="./icons/delete.svg" width="15" height="15"> delete</div>
       </div>
     </div>
     <script type="module" src="/main.js" defer></script>

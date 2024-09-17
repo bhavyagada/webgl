@@ -1,11 +1,13 @@
 import { createRenderer, resizeRenderer, clearRenderer, loadToolbarTexture, renderMask, createImage, renderImage, isPointInToolbar, getClickedButton } from './renderer';
 import backIcon from './icons/moveback.svg';
-import flipIcon from './icons/flip.png';
-import duplicateIcon from './icons/duplicate.png';
-import segmentIcon from './icons/segment.png';
+import flipIcon from './icons/flip.svg';
+import duplicateIcon from './icons/duplicate.svg';
+import segmentIcon from './icons/segment.svg';
+import downloadIcon from './icons/download.svg';
+import deleteIcon from './icons/delete.svg';
 
 const worker = new Worker('worker.js', { type: 'module' });
-const toolbar = { buttonWidth: 35, buttonHeight: 35, gap: 15, buttonTextures: [] };
+const toolbar = { buttonWidth: 30, buttonHeight: 30, gap: 15, buttonTextures: [] };
 
 let scene = [];
 let history = [];
@@ -54,7 +56,7 @@ export const init = () => {
   if (!gl) throw new Error("WebGL2 not supported!");
   renderer = createRenderer(canvas, gl);
 
-  loadToolbarTexture(gl, [backIcon, flipIcon, duplicateIcon, segmentIcon]).then((textures) => {
+  loadToolbarTexture(gl, [backIcon, flipIcon, duplicateIcon, segmentIcon, downloadIcon, deleteIcon]).then((textures) => {
     toolbar.buttonTextures = textures;
     needsRender = true;
   });
@@ -176,13 +178,16 @@ const segmentImage = async (image) => {
     console.error('model not loaded');
     return;
   }
+  isSegmenting = true;
 
   // Convert image to data URL
   const canvas = document.createElement('canvas');
   canvas.width = image.width;
   canvas.height = image.height;
+  image.imageElement.width = canvas.width;
+  image.imageElement.height = canvas.height;
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(image.imageElement, 0, 0);
+  ctx.drawImage(image.imageElement, 0, 0, canvas.width, canvas.height);
   const dataURL = canvas.toDataURL();
 
   // Send the image to the worker for processing
@@ -218,7 +223,24 @@ const handleInteraction = (x, y, isStart) => {
           break;
         case 3: // Segment
           console.log("segmentation button clicked!");
-          isSegmenting = true;
+          segmentImage(selectedImage);
+          break;
+        case 4: // Download
+          const canvas = document.createElement('canvas');
+          canvas.width = selectedImage.width;
+          canvas.height = selectedImage.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(selectedImage.imageElement, 0, 0, canvas.width, canvas.height);
+          const dataURL = canvas.toDataURL('image/png');
+          const a = document.createElement('a');
+          a.href = dataURL;
+          a.download = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15) + '.png';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          break;
+        case 5: // Delete
+          deleteSelectedImage(selectedImage);
           break;
       }
       needsRender = true;
@@ -543,7 +565,6 @@ const onPaste = (event) => {
           scene.push(image);
           history.push({ type: 'add', image: image });
           needsRender = true;
-          segmentImage(image);
         };
         img.src = e.target.result;
         console.log(e.target.result);
@@ -576,15 +597,19 @@ const onKeyDown = (event) => {
     needsRender = true;
   }
 	if (selectedImage && (event.key === 'Backspace' || event.key === 'Delete')) {
-    const index = scene.indexOf(selectedImage);
-    if (index !== -1) {
-      history.push({ type: 'delete', image: selectedImage, index: index });
-      scene.splice(index, 1);
-      selectedImage = null;
-      needsRender = true;
-    }
+    deleteSelectedImage(selectedImage);
   }
 };
+
+const deleteSelectedImage = (image) => {
+  const index = scene.indexOf(image);
+  if (index !== -1) {
+    history.push({ type: 'delete', image, index });
+    scene.splice(index, 1);
+    selectedImage = null;
+    needsRender = true;
+  }
+}
 
 const onResize = () => {
   if (resizeRenderer(renderer)) needsRender = true
