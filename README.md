@@ -14,3 +14,6 @@ Todo:
 - [x] Duplicate
 - [x] Image Segmentation (SlimSAM)
 - [ ] Zoom In and Out
+- [ ] Image generation
+- [ ] Inpainting
+- [ ] Depthwise background removal

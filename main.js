@@ -1,17 +1,21 @@
-import { createRenderer, resizeRenderer, clearRenderer, loadToolbarTexture, renderMask, createImage, renderImage, isPointInToolbar, getClickedButton } from './renderer';
+import { createRenderer, resizeRenderer, clearRenderer, loadToolbarTexture, renderMask, createImage, renderImage, isPointInToolbar, getClickedButton, renderCropOverlay } from './renderer';
 import backIcon from './icons/moveback.svg';
 import flipIcon from './icons/flip.svg';
 import duplicateIcon from './icons/duplicate.svg';
 import segmentIcon from './icons/segment.svg';
 import downloadIcon from './icons/download.svg';
 import deleteIcon from './icons/delete.svg';
+import cropIcon from './icons/crop.svg';
 
 const worker = new Worker('worker.js', { type: 'module' });
 const toolbar = { buttonWidth: 30, buttonHeight: 30, gap: 15, buttonTextures: [] };
+const canvas = document.querySelector("#c");
+const gl = canvas.getContext("webgl2");
+if (!gl) throw new Error("WebGL2 not supported!");
+const renderer = createRenderer(canvas, gl);
 
 let scene = [];
 let history = [];
-let renderer;
 let mouseX = 0;
 let mouseY = 0;
 let needsRender = true;
@@ -23,6 +27,9 @@ let lastMouseX = 0;
 let lastMouseY = 0;
 let panOffsetX = 0;
 let panOffsetY = 0;
+let isCropping = false;
+let isDraggingCropHandle = false;
+let selectedCropHandle = null;
 
 // SAM State variables
 let isSegmenting = false;
@@ -33,14 +40,14 @@ let isEmbeddingInProgress = false;
 worker.onmessage = (e) => {
   const { type, data } = e.data;
   if (type === 'ready') {
-    console.log('model loaded successfully');
+    console.log('model loaded!');
   } else if (type === 'segment_result') {
     if (data === 'start') {
-      console.log('Extracting image embedding...');
+      console.log('extracting image embedding...');
       isEmbeddingInProgress = true;
       document.body.style.cursor = 'wait';
     } else {
-      console.log('Embedding extracted!');
+      console.log('embedding extracted!');
       isEmbeddingInProgress = false;
       document.body.style.cursor = 'default';
       needsRender = true;
@@ -51,17 +58,6 @@ worker.onmessage = (e) => {
 };
 
 export const init = () => {
-  const canvas = document.querySelector("#c");
-  const gl = canvas.getContext("webgl2");
-  if (!gl) throw new Error("WebGL2 not supported!");
-  renderer = createRenderer(canvas, gl);
-
-  loadToolbarTexture(gl, [backIcon, flipIcon, duplicateIcon, segmentIcon, downloadIcon, deleteIcon]).then((textures) => {
-    toolbar.buttonTextures = textures;
-    needsRender = true;
-  });
-
-  // add event listeners
   canvas.addEventListener('touchmove', onTouchMove, { passive: false });
   canvas.addEventListener('touchstart', onTouchStart, { passive: false });
   canvas.addEventListener('touchend', onTouchEnd, { passive: false });
@@ -91,6 +87,11 @@ export const init = () => {
 	xhr.open('GET', 'https://www.jockostore.com/cdn/shop/t/33/assets/popup-image.jpg?v=142777728587095439201637241641');
   xhr.responseType = 'blob';
   xhr.send();
+
+  loadToolbarTexture(gl, [backIcon, flipIcon, duplicateIcon, segmentIcon, downloadIcon, deleteIcon, cropIcon]).then((textures) => {
+    toolbar.buttonTextures = textures;
+    needsRender = true;
+  });
 
   onResize();
   render();
@@ -200,6 +201,48 @@ const handleInteraction = (x, y, isStart) => {
     lastMouseX = x;
     lastMouseY = y;
 
+    if (isDraggingCropHandle) {
+      const dx = x - lastMouseX;
+      const dy = y - lastMouseY;
+      switch (selectedCropHandle.type) {
+        case 'nw':
+          selectedImage.cropArea.x += dx;
+          selectedImage.cropArea.y += dy;
+          selectedImage.cropArea.width -= dx;
+          selectedImage.cropArea.height -= dy;
+          break;
+        case 'ne':
+          selectedImage.cropArea.y += dy;
+          selectedImage.cropArea.width += dx;
+          selectedImage.cropArea.height -= dy;
+          break;
+        case 'sw':
+          selectedImage.cropArea.x += dx;
+          selectedImage.cropArea.width -= dx;
+          selectedImage.cropArea.height += dy;
+          break;
+        case 'se':
+          selectedImage.cropArea.width += dx;
+          selectedImage.cropArea.height += dy;
+          break;
+        case 'n':
+          selectedImage.cropArea.y += dy;
+          selectedImage.cropArea.height -= dy;
+          break;
+        case 's':
+          selectedImage.cropArea.height += dy;
+          break;
+        case 'w':
+          selectedImage.cropArea.x += dx;
+          selectedImage.cropArea.width -= dx;
+          break;
+        case 'e':
+          selectedImage.cropArea.width += dx;
+          break;
+      }
+      needsRender = true;
+    }
+
     if (selectedImage && isPointInToolbar(x, y, toolbar, selectedImage)) {
       const clickedButton = getClickedButton(x, y, toolbar, selectedImage);
       switch (clickedButton) {
@@ -210,8 +253,7 @@ const handleInteraction = (x, y, isStart) => {
           break;
         case 1: // Flip horizontally
           console.log("flip button clicked!!");
-          selectedImage.flipped = !selectedImage.flipped;
-          needsRender = true;
+          flipImageHorizontally(selectedImage);
           break;
         case 2: // Duplicate
           console.log("duplicate button clicked!!");
@@ -226,6 +268,7 @@ const handleInteraction = (x, y, isStart) => {
           segmentImage(selectedImage);
           break;
         case 4: // Download
+          console.log("download button clicked");
           const canvas = document.createElement('canvas');
           canvas.width = selectedImage.width;
           canvas.height = selectedImage.height;
@@ -240,7 +283,25 @@ const handleInteraction = (x, y, isStart) => {
           document.body.removeChild(a);
           break;
         case 5: // Delete
+          console.log("delete button clicked");
           deleteSelectedImage(selectedImage);
+          break;
+        case 6: // Crop
+          console.log("crop button clicked");
+          isCropping = !isCropping;
+          console.log(isCropping);
+          if (isCropping) {
+            // Initialize crop area to the current image size
+            selectedImage.cropArea = {
+              x: selectedImage.x - selectedImage.width / 2,
+              y: selectedImage.y - selectedImage.height / 2,
+              width: selectedImage.width,
+              height: selectedImage.height,
+            };
+          } else {
+            // Crop the image and discard the image outside the crop area
+            cropImage(selectedImage);
+          }
           break;
       }
       needsRender = true;
@@ -267,6 +328,11 @@ const handleInteraction = (x, y, isStart) => {
       }
     }
   } else {
+    if (isDraggingCropHandle) {
+      lastMouseX = x;
+      lastMouseY = y;
+    }
+
     if (isDragging && selectedImage) {
       const dx = x - lastMouseX;
       const dy = y - lastMouseY;
@@ -328,6 +394,91 @@ const handleInteraction = (x, y, isStart) => {
   return false; // Indicate that we didn't interact with the toolbar
 };
 
+const flipImageHorizontally = (image) => {
+  image.flipped = !image.flipped;
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext('2d');
+
+  // Draw the image flipped
+  ctx.scale(-1, 1);
+  ctx.drawImage(image.imageElement, -image.width, 0, image.width, image.height);
+
+  const flippedImage = new Image();
+  flippedImage.onload = () => {
+    image.imageElement = flippedImage;
+    needsRender = true;
+  };
+  flippedImage.src = canvas.toDataURL();
+};
+
+const cropImage = (image) => {
+  const { cropArea } = image;
+  const croppedCanvas = document.createElement('canvas');
+  croppedCanvas.width = cropArea.width;
+  croppedCanvas.height = cropArea.height;
+  const croppedCtx = croppedCanvas.getContext('2d');
+
+  croppedCtx.drawImage(image.imageElement, cropArea.x - image.x + image.width / 2, cropArea.y - image.y + image.height / 2, cropArea.width, cropArea.height, 0, 0, cropArea.width, cropArea.height);
+
+  const croppedImage = new Image();
+  croppedImage.onload = () => {
+    // Create a new image object for the cropped image
+    const croppedImageObject = createImage(renderer, croppedImage, image.x, image.y);
+    croppedImageObject.width = cropArea.width;
+    croppedImageObject.height = cropArea.height;
+
+    // Replace the original image in the scene array with the new cropped image object
+    const index = scene.indexOf(image);
+    if (index !== -1) {
+      scene.splice(index, 1, croppedImageObject);
+    }
+    history.push({ type: 'delete', image, index });
+
+    // Update the selectedImage to reference the new cropped image object
+    selectedImage = croppedImageObject;
+    needsRender = true;
+  };
+  croppedImage.src = croppedCanvas.toDataURL();
+};
+
+// Add a new function to check if the mouse is over a crop handle
+const isOverCropHandle = (x, y, image) => {
+  const { cropArea } = image;
+  const handleSize = 10;
+  const handles = [
+    { x: cropArea.x, y: cropArea.y },
+    { x: cropArea.x + cropArea.width, y: cropArea.y },
+    { x: cropArea.x, y: cropArea.y + cropArea.height },
+    { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height },
+    { x: cropArea.x + cropArea.width / 2, y: cropArea.y },
+    { x: cropArea.x + cropArea.width / 2, y: cropArea.y + cropArea.height },
+    { x: cropArea.x, y: cropArea.y + cropArea.height / 2 },
+    { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height / 2 },
+  ];
+  return handles.some((handle) => Math.abs(x - handle.x) < handleSize && Math.abs(y - handle.y) < handleSize);
+};
+
+const getSelectedCropHandle = (x, y, image) => {
+  const { cropArea } = image;
+  const handleSize = 10;
+  const handles = [
+    { x: cropArea.x, y: cropArea.y, type: 'nw' },
+    { x: cropArea.x + cropArea.width, y: cropArea.y, type: 'ne' },
+    { x: cropArea.x, y: cropArea.y + cropArea.height, type: 'sw' },
+    { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height, type: 'se' },
+    { x: cropArea.x + cropArea.width / 2, y: cropArea.y, type: 'n' },
+    { x: cropArea.x + cropArea.width / 2, y: cropArea.y + cropArea.height, type: 's' },
+    { x: cropArea.x, y: cropArea.y + cropArea.height / 2, type: 'w' },
+    { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height / 2, type: 'e' },
+  ];
+  return handles.find(
+    (handle) =>
+      Math.abs(x - handle.x) < handleSize && Math.abs(y - handle.y) < handleSize
+  );
+};
+
 const onTouchMove = (event) => {
   event.preventDefault();
   if (event.touches.length === 1) {
@@ -384,6 +535,56 @@ const onMouseMove = (event) => {
   mouseX = event.clientX - rect.left;
   mouseY = event.clientY - rect.top;
 
+  if (isCropping && selectedImage) {
+    if (isOverCropHandle(mouseX, mouseY, selectedImage)) {
+      document.body.style.cursor = 'move';
+    } else {
+      document.body.style.cursor = 'default';
+    }
+
+    if (isDraggingCropHandle) {
+      const dx = mouseX - lastMouseX;
+      const dy = mouseY - lastMouseY;
+      switch (selectedCropHandle.type) {
+        case 'nw':
+          selectedImage.cropArea.x += dx;
+          selectedImage.cropArea.y += dy;
+          selectedImage.cropArea.width -= dx;
+          selectedImage.cropArea.height -= dy;
+          break;
+        case 'ne':
+          selectedImage.cropArea.y += dy;
+          selectedImage.cropArea.width += dx;
+          selectedImage.cropArea.height -= dy;
+          break;
+        case 'sw':
+          selectedImage.cropArea.x += dx;
+          selectedImage.cropArea.width -= dx;
+          selectedImage.cropArea.height += dy;
+          break;
+        case 'se':
+          selectedImage.cropArea.width += dx;
+          selectedImage.cropArea.height += dy;
+          break;
+        case 'n':
+          selectedImage.cropArea.y += dy;
+          selectedImage.cropArea.height -= dy;
+          break;
+        case 's':
+          selectedImage.cropArea.height += dy;
+          break;
+        case 'w':
+          selectedImage.cropArea.x += dx;
+          selectedImage.cropArea.width -= dx;
+          break;
+        case 'e':
+          selectedImage.cropArea.width += dx;
+          break;
+      }
+      needsRender = true;
+    }
+  }
+
   if (isSegmenting && selectedImage && !isDecoding) {
     isDecoding = true;
     const point = getPoint(mouseX, mouseY, selectedImage);
@@ -395,7 +596,6 @@ const onMouseMove = (event) => {
     document.body.style.cursor = 'wait';
   } else if (selectedImage && isPointInToolbar(mouseX, mouseY, toolbar, selectedImage)) {
     const i = getClickedButton(mouseX, mouseY, toolbar, selectedImage)
-    console.log(i);
     document.body.style.cursor = 'pointer';
     needsRender = true;
   } else if (selectedImage) {
@@ -437,6 +637,14 @@ const onMouseDown = (event) => {
   const rect = event.target.getBoundingClientRect();
   mouseX = event.clientX - rect.left;
   mouseY = event.clientY - rect.top;
+
+  if (isCropping && selectedImage) {
+    if (isOverCropHandle(mouseX, mouseY, selectedImage)) {
+      isDraggingCropHandle = true;
+      selectedCropHandle = getSelectedCropHandle(mouseX, mouseY, selectedImage);
+    }
+  }
+
   if (isSegmenting && selectedImage) {
     const point = getPoint(mouseX, mouseY, selectedImage);
     worker.postMessage({ type: 'decode', data: [point] });
@@ -531,6 +739,7 @@ const cutMask = () => {
 const onMouseUp = () => {
   isDragging = false;
   isResizing = false;
+  isDraggingCropHandle = false;
   if (selectedImage && (selectedImage.x !== selectedImage.initialX || selectedImage.y !== selectedImage.initialY ||
       selectedImage.width !== selectedImage.initialWidth || selectedImage.height !== selectedImage.initialHeight)) {
     history.push({ 
@@ -621,11 +830,16 @@ const render = () => {
     scene.forEach((object) => {
 			object.x += panOffsetX;
 			object.y += panOffsetY;
-			renderImage(renderer, object, object === selectedImage, toolbar);
+			renderImage(renderer, object, object === selectedImage, toolbar, isCropping);
 
       // Render mask if segmenting and this is the selected image
       if (isSegmenting && object === selectedImage && object.maskCanvas) {
         renderMask(renderer, object);
+      }
+
+      // Render crop overlay and handles if cropping and this is the selected image
+      if (isCropping && object === selectedImage) {
+        renderCropOverlay(renderer, object);
       }
 		});
 		panOffsetX = 0;

@@ -1,4 +1,4 @@
-import { env, SamModel, AutoProcessor, RawImage, Tensor } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@latest';
+import { env, SamModel, AutoProcessor, RawImage, Tensor } from '@xenova/transformers';
 
 // Since we will download the model from the Hugging Face Hub, we can skip the local model check
 env.allowLocalModels = false;
@@ -37,10 +37,7 @@ self.onmessage = async (e) => {
   }
 
   const { type, data } = e.data;
-  if (type === 'reset') {
-    image_inputs = null;
-    image_embeddings = null;
-  } else if (type === 'segment') {
+  if (type === 'segment') {
     // Indicate that we are starting to segment the image
     self.postMessage({ type: 'segment_result', data: 'start' });
 
