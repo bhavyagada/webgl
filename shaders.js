@@ -27,17 +27,27 @@ export const imageVertexShader = `#version 300 es
 export const imageFragmentShader = `#version 300 es
   precision highp float;
 
-  in vec2 v_texCoord;
-
   uniform sampler2D u_image;
+  uniform sampler2D u_depthMask;
   uniform vec4 u_color;
   uniform bool is_image;
+  uniform bool is_depthMask;
+  uniform float u_depthThreshold;
 
+  in vec2 v_texCoord;
   out vec4 outColor;
 
   void main() {
     if (is_image) {
-      outColor = texture(u_image, v_texCoord);
+      vec4 color = texture(u_image, v_texCoord);
+      if (is_depthMask) {
+        vec4 depthMaskColor = texture(u_depthMask, v_texCoord);
+        float depth = (depthMaskColor.r + depthMaskColor.g + depthMaskColor.b) / 3.0;
+        if (depth < u_depthThreshold) {
+          discard;
+        }
+      }
+      outColor = color;
     } else {
       outColor = u_color;
     }

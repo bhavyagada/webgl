@@ -1,4 +1,4 @@
-import { createRenderer, resizeRenderer, clearRenderer, loadToolbarTexture, renderMask, createImage, renderImage, isPointInToolbar, getClickedButton, renderCropOverlay } from './renderer';
+import { createRenderer, resizeRenderer, clearRenderer, loadToolbarTexture, renderSegmentMask, createImage, renderImage, isPointInToolbar, getClickedButton, renderCropOverlay, renderDepthSlider } from './renderer';
 import backIcon from './icons/moveback.svg';
 import flipIcon from './icons/flip.svg';
 import duplicateIcon from './icons/duplicate.svg';
@@ -6,13 +6,16 @@ import segmentIcon from './icons/segment.svg';
 import downloadIcon from './icons/download.svg';
 import deleteIcon from './icons/delete.svg';
 import cropIcon from './icons/crop.svg';
+import dptIcon from './icons/dpt.svg';
 
+const dptworker = new Worker('dptworker.js', { type: 'module' });
 const worker = new Worker('worker.js', { type: 'module' });
 const toolbar = { buttonWidth: 30, buttonHeight: 30, gap: 15, buttonTextures: [] };
 const canvas = document.querySelector("#c");
 const gl = canvas.getContext("webgl2");
 if (!gl) throw new Error("WebGL2 not supported!");
 const renderer = createRenderer(canvas, gl);
+const handleSize = 10;
 
 let scene = [];
 let history = [];
@@ -36,6 +39,36 @@ let isSegmenting = false;
 let currentMask = null;
 let isDecoding = false;
 let isEmbeddingInProgress = false;
+
+// DPT State variables
+let isSliderDragging = false;
+let isDepthSliderVisible = false;
+let depthThreshold = 0.0;
+
+dptworker.onmessage = (e) => {
+  const { type, data, imageId } = e.data;
+  if (type === 'ready') {
+    console.log('Depth estimation worker is ready');
+  } else if (type === 'depth_result') {
+    if (data === 'start') {
+      console.log('Starting depth estimation');
+    } else {
+      console.log('Depth estimation complete');
+      const image = scene.find(img => img.id === imageId);
+      if (image) {
+        image.depthData = data.depth;
+        image.isEstimatingDepth = false;
+        needsRender = true;
+      }
+    }
+  } else if (type === 'error') {
+    console.error('Error in depth estimation:', data);
+    const image = scene.find(img => img.id === imageId);
+    if (image) {
+      image.isEstimatingDepth = false;
+    }
+  }
+};
 
 worker.onmessage = (e) => {
   const { type, data } = e.data;
@@ -88,7 +121,7 @@ export const init = () => {
   xhr.responseType = 'blob';
   xhr.send();
 
-  loadToolbarTexture(gl, [backIcon, flipIcon, duplicateIcon, segmentIcon, downloadIcon, deleteIcon, cropIcon]).then((textures) => {
+  loadToolbarTexture(gl, [backIcon, flipIcon, duplicateIcon, segmentIcon, downloadIcon, deleteIcon, cropIcon, dptIcon]).then((textures) => {
     toolbar.buttonTextures = textures;
     needsRender = true;
   });
@@ -96,6 +129,14 @@ export const init = () => {
   onResize();
   render();
 };
+
+const createTempCanvas = (width, height) => {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  return [canvas, ctx];
+}
 
 const getImageAtPosition = (x, y) => {
   const handleSize = 10;
@@ -135,16 +176,9 @@ const handleDecodeResult = (data) => {
   const { mask, scores } = data;
   currentMask = { mask, scores };
 
-  // Create a new canvas to draw the mask
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = selectedImage.width;
-  maskCanvas.height = selectedImage.height;
-  const ctx = maskCanvas.getContext('2d');
-
-  // Create context and allocate buffer for pixel data
+  const [maskCanvas, ctx] = createTempCanvas(selectedImage.width, selectedImage.height);
   const imageData = ctx.createImageData(maskCanvas.width, maskCanvas.height);
 
-  // Select best mask
   const numMasks = scores.length;
   let bestIndex = 0;
   for (let i = 1; i < numMasks; ++i) {
@@ -153,7 +187,6 @@ const handleDecodeResult = (data) => {
     }
   }
 
-  // Fill mask with colour
   const pixelData = imageData.data;
   for (let i = 0; i < pixelData.length / 4; ++i) {
     if (mask.data[numMasks * i + bestIndex] === 1) {
@@ -164,11 +197,8 @@ const handleDecodeResult = (data) => {
       pixelData[offset + 3] = 128; // alpha (semi-transparent)
     }
   }
-
-  // Draw image data to context
   ctx.putImageData(imageData, 0, 0);
 
-  // Update the mask on the selectedImage
   selectedImage.maskCanvas = maskCanvas;
   needsRender = true;
   isDecoding = false;
@@ -181,18 +211,55 @@ const segmentImage = async (image) => {
   }
   isSegmenting = true;
 
-  // Convert image to data URL
-  const canvas = document.createElement('canvas');
-  canvas.width = image.width;
-  canvas.height = image.height;
+  const [canvas, ctx] = createTempCanvas(image.width, image.height);
   image.imageElement.width = canvas.width;
   image.imageElement.height = canvas.height;
-  const ctx = canvas.getContext('2d');
   ctx.drawImage(image.imageElement, 0, 0, canvas.width, canvas.height);
   const dataURL = canvas.toDataURL();
 
-  // Send the image to the worker for processing
   worker.postMessage({ type: 'segment', data: dataURL });
+};
+
+const estimateDepth = (image) => {
+  if (!dptworker) {
+    console.error('model not loaded');
+    return;
+  }
+  image.isEstimatingDepth = true;
+
+  const [canvas, ctx] = createTempCanvas(image.width, image.height);
+  image.imageElement.width = canvas.width;
+  image.imageElement.height = canvas.height;
+  ctx.drawImage(image.imageElement, 0, 0, canvas.width, canvas.height);
+  const dataURL = canvas.toDataURL();
+  image.id = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+  dptworker.postMessage({ type: 'estimate_depth', data: dataURL, imageId: image.id });
+};
+
+const applyDepthMask = (image) => {
+  if (!image.depthData) return;
+  const depth = image.depthData;
+  const { data, width, height } = depth;
+
+  const [depthMaskCanvas, depthMaskCtx] = createTempCanvas(width, height);
+  const depthMaskImageData = depthMaskCtx.createImageData(depthMaskCanvas.width, depthMaskCanvas.height);
+
+  const depthValues = Object.values(data);
+  const minDepth = Math.min(...depthValues);
+  const maxDepth = Math.max(...depthValues);
+  const range = maxDepth - minDepth;
+  
+  for (let i = 0; i < depthValues.length; i++) {
+    const normalizedDepth = (depthValues[i] - minDepth) / range;
+    depthMaskImageData.data[i * 4] = normalizedDepth * 255;
+    depthMaskImageData.data[i * 4 + 1] = normalizedDepth * 255;
+    depthMaskImageData.data[i * 4 + 2] = normalizedDepth * 255;
+    depthMaskImageData.data[i * 4 + 3] = 255;  // Full alpha
+  }
+  
+  depthMaskCtx.putImageData(depthMaskImageData, 0, 0);
+  image.depthMaskCanvas = depthMaskCanvas;
 };
 
 const handleInteraction = (x, y, isStart) => {
@@ -269,10 +336,7 @@ const handleInteraction = (x, y, isStart) => {
           break;
         case 4: // Download
           console.log("download button clicked");
-          const canvas = document.createElement('canvas');
-          canvas.width = selectedImage.width;
-          canvas.height = selectedImage.height;
-          const ctx = canvas.getContext('2d');
+          const [canvas, ctx] = createTempCanvas(selectedImage.width, selectedImage.height);
           ctx.drawImage(selectedImage.imageElement, 0, 0, canvas.width, canvas.height);
           const dataURL = canvas.toDataURL('image/png');
           const a = document.createElement('a');
@@ -291,7 +355,6 @@ const handleInteraction = (x, y, isStart) => {
           isCropping = !isCropping;
           console.log(isCropping);
           if (isCropping) {
-            // Initialize crop area to the current image size
             selectedImage.cropArea = {
               x: selectedImage.x - selectedImage.width / 2,
               y: selectedImage.y - selectedImage.height / 2,
@@ -299,9 +362,12 @@ const handleInteraction = (x, y, isStart) => {
               height: selectedImage.height,
             };
           } else {
-            // Crop the image and discard the image outside the crop area
             cropImage(selectedImage);
           }
+          break;
+        case 7: // Depth Estimation
+          isDepthSliderVisible = !isDepthSliderVisible;
+          needsRender = true;
           break;
       }
       needsRender = true;
@@ -396,12 +462,7 @@ const handleInteraction = (x, y, isStart) => {
 
 const flipImageHorizontally = (image) => {
   image.flipped = !image.flipped;
-  const canvas = document.createElement('canvas');
-  canvas.width = image.width;
-  canvas.height = image.height;
-  const ctx = canvas.getContext('2d');
-
-  // Draw the image flipped
+  const [canvas, ctx] = createTempCanvas(image.width, image.height);
   ctx.scale(-1, 1);
   ctx.drawImage(image.imageElement, -image.width, 0, image.width, image.height);
 
@@ -415,55 +476,28 @@ const flipImageHorizontally = (image) => {
 
 const cropImage = (image) => {
   const { cropArea } = image;
-  const croppedCanvas = document.createElement('canvas');
-  croppedCanvas.width = cropArea.width;
-  croppedCanvas.height = cropArea.height;
-  const croppedCtx = croppedCanvas.getContext('2d');
-
+  const [croppedCanvas, croppedCtx] = createTempCanvas(cropArea.width, cropArea.height);
   croppedCtx.drawImage(image.imageElement, cropArea.x - image.x + image.width / 2, cropArea.y - image.y + image.height / 2, cropArea.width, cropArea.height, 0, 0, cropArea.width, cropArea.height);
 
   const croppedImage = new Image();
   croppedImage.onload = () => {
-    // Create a new image object for the cropped image
     const croppedImageObject = createImage(renderer, croppedImage, image.x, image.y);
     croppedImageObject.width = cropArea.width;
     croppedImageObject.height = cropArea.height;
-
-    // Replace the original image in the scene array with the new cropped image object
     const index = scene.indexOf(image);
     if (index !== -1) {
       scene.splice(index, 1, croppedImageObject);
     }
     history.push({ type: 'delete', image, index });
 
-    // Update the selectedImage to reference the new cropped image object
     selectedImage = croppedImageObject;
     needsRender = true;
   };
   croppedImage.src = croppedCanvas.toDataURL();
 };
 
-// Add a new function to check if the mouse is over a crop handle
-const isOverCropHandle = (x, y, image) => {
-  const { cropArea } = image;
-  const handleSize = 10;
-  const handles = [
-    { x: cropArea.x, y: cropArea.y },
-    { x: cropArea.x + cropArea.width, y: cropArea.y },
-    { x: cropArea.x, y: cropArea.y + cropArea.height },
-    { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height },
-    { x: cropArea.x + cropArea.width / 2, y: cropArea.y },
-    { x: cropArea.x + cropArea.width / 2, y: cropArea.y + cropArea.height },
-    { x: cropArea.x, y: cropArea.y + cropArea.height / 2 },
-    { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height / 2 },
-  ];
-  return handles.some((handle) => Math.abs(x - handle.x) < handleSize && Math.abs(y - handle.y) < handleSize);
-};
-
-const getSelectedCropHandle = (x, y, image) => {
-  const { cropArea } = image;
-  const handleSize = 10;
-  const handles = [
+const getCropHandle = (cropArea) => {
+  return [
     { x: cropArea.x, y: cropArea.y, type: 'nw' },
     { x: cropArea.x + cropArea.width, y: cropArea.y, type: 'ne' },
     { x: cropArea.x, y: cropArea.y + cropArea.height, type: 'sw' },
@@ -473,11 +507,7 @@ const getSelectedCropHandle = (x, y, image) => {
     { x: cropArea.x, y: cropArea.y + cropArea.height / 2, type: 'w' },
     { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height / 2, type: 'e' },
   ];
-  return handles.find(
-    (handle) =>
-      Math.abs(x - handle.x) < handleSize && Math.abs(y - handle.y) < handleSize
-  );
-};
+}
 
 const onTouchMove = (event) => {
   event.preventDefault();
@@ -535,8 +565,23 @@ const onMouseMove = (event) => {
   mouseX = event.clientX - rect.left;
   mouseY = event.clientY - rect.top;
 
+  if (isDepthSliderVisible && selectedImage && selectedImage.depthData) {
+    const sliderX = selectedImage.x - selectedImage.width / 2;
+    const sliderY = selectedImage.y + selectedImage.height / 2 + 20;
+    const sliderWidth = selectedImage.width;
+    const sliderHeight = 20;
+    if (isSliderDragging) {
+      depthThreshold = Math.max(0, Math.min(1, (mouseX - sliderX) / sliderWidth));
+      applyDepthMask(selectedImage, depthThreshold);
+      needsRender = true;
+    } else if (mouseX >= sliderX && mouseX <= sliderX + sliderWidth &&
+               mouseY >= sliderY - sliderHeight / 2 && mouseY <= sliderY + sliderHeight / 2) {
+      document.body.style.cursor = 'pointer';
+    }
+  }
+
   if (isCropping && selectedImage) {
-    if (isOverCropHandle(mouseX, mouseY, selectedImage)) {
+    if (getCropHandle(selectedImage.cropArea).some((handle) => Math.abs(mouseX - handle.x) < handleSize && Math.abs(mouseY - handle.y) < handleSize)) {
       document.body.style.cursor = 'move';
     } else {
       document.body.style.cursor = 'default';
@@ -638,10 +683,26 @@ const onMouseDown = (event) => {
   mouseX = event.clientX - rect.left;
   mouseY = event.clientY - rect.top;
 
+  if (isDepthSliderVisible && selectedImage && selectedImage.depthData) {
+    const sliderX = selectedImage.x - selectedImage.width / 2;
+    const sliderY = selectedImage.y + selectedImage.height / 2 + 20;
+    const sliderWidth = selectedImage.width;
+    const sliderHeight = 20;
+    if (mouseX >= sliderX && mouseX <= sliderX + sliderWidth &&
+        mouseY >= sliderY - sliderHeight / 2 && mouseY <= sliderY + sliderHeight / 2) {
+      isSliderDragging = true;
+      depthThreshold = Math.max(0, Math.min(1, (mouseX - sliderX) / sliderWidth));
+      applyDepthMask(selectedImage, depthThreshold);
+      needsRender = true;
+      event.preventDefault();
+      return;
+    }
+  }
+
   if (isCropping && selectedImage) {
-    if (isOverCropHandle(mouseX, mouseY, selectedImage)) {
+    if (getCropHandle(selectedImage.cropArea).some((handle) => Math.abs(mouseX - handle.x) < handleSize && Math.abs(mouseY - handle.y) < handleSize)) {
       isDraggingCropHandle = true;
-      selectedCropHandle = getSelectedCropHandle(mouseX, mouseY, selectedImage);
+      selectedCropHandle = getCropHandle(selectedImage.cropArea).find((handle) => Math.abs(mouseX - handle.x) < handleSize && Math.abs(mouseY - handle.y) < handleSize);
     }
   }
 
@@ -665,23 +726,13 @@ const cutMask = () => {
   const { mask, scores } = currentMask;
   const w = selectedImage.width;
   const h = selectedImage.height;
-
-  // Create a new canvas to hold the image
-  const imageCanvas = document.createElement('canvas');
-  imageCanvas.width = w;
-  imageCanvas.height = h;
-  const imageContext = imageCanvas.getContext('2d');
+  const [, imageContext] = createTempCanvas(w, h);
   imageContext.drawImage(selectedImage.imageElement, 0, 0, w, h);
   const imagePixelData = imageContext.getImageData(0, 0, w, h);
 
-  // Create a new canvas to hold the cut-out
-  const cutCanvas = document.createElement('canvas');
-  cutCanvas.width = w;
-  cutCanvas.height = h;
-  const cutContext = cutCanvas.getContext('2d');
+  const [cutCanvas, cutContext] = createTempCanvas(w, h);
   const cutPixelData = cutContext.getImageData(0, 0, w, h);
 
-  // Select best mask
   const numMasks = scores.length;
   let bestIndex = 0;
   for (let i = 1; i < numMasks; ++i) {
@@ -690,10 +741,7 @@ const cutMask = () => {
     }
   }
 
-  // Find the bounding box of the non-transparent pixels
   let minX = w, minY = h, maxX = 0, maxY = 0;
-
-  // Copy the image pixel data to the cut canvas only where the mask is active
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
@@ -702,30 +750,20 @@ const cutMask = () => {
           const offset = 4 * i + j;
           cutPixelData.data[offset] = imagePixelData.data[offset];
         }
-        // Update bounding box
         minX = Math.min(minX, x);
         minY = Math.min(minY, y);
         maxX = Math.max(maxX, x);
         maxY = Math.max(maxY, y);
       } else {
-        // Set alpha to 0 for non-masked areas
         cutPixelData.data[4 * i + 3] = 0;
       }
     }
   }
-
   cutContext.putImageData(cutPixelData, 0, 0);
 
-  // Create a new canvas with the size of the bounding box
-  const finalCanvas = document.createElement('canvas');
-  finalCanvas.width = maxX - minX + 1;
-  finalCanvas.height = maxY - minY + 1;
-  const finalContext = finalCanvas.getContext('2d');
-
-  // Draw the cut-out image to the final canvas
+  const [finalCanvas, finalContext] = createTempCanvas(maxX - minX + 1, maxY - minY + 1);
   finalContext.drawImage(cutCanvas, minX, minY, finalCanvas.width, finalCanvas.height, 0, 0, finalCanvas.width, finalCanvas.height);
 
-  // Create a new image from the cut-out
   const cutImage = new Image();
   cutImage.onload = () => {
     const cutObject = createImage(renderer, cutImage, selectedImage.x + selectedImage.width + 20, selectedImage.y);
@@ -740,16 +778,10 @@ const onMouseUp = () => {
   isDragging = false;
   isResizing = false;
   isDraggingCropHandle = false;
+  isSliderDragging = false;
   if (selectedImage && (selectedImage.x !== selectedImage.initialX || selectedImage.y !== selectedImage.initialY ||
       selectedImage.width !== selectedImage.initialWidth || selectedImage.height !== selectedImage.initialHeight)) {
-    history.push({ 
-      type: 'move_resize', 
-      image: selectedImage, 
-      fromX: selectedImage.initialX, 
-      fromY: selectedImage.initialY,
-      fromWidth: selectedImage.initialWidth,
-      fromHeight: selectedImage.initialHeight
-    });
+    history.push({ type: 'move_resize', image: selectedImage, fromX: selectedImage.initialX, fromY: selectedImage.initialY, fromWidth: selectedImage.initialWidth, fromHeight: selectedImage.initialHeight });
   }
   document.body.style.cursor = 'default';
 };
@@ -774,9 +806,9 @@ const onPaste = (event) => {
           scene.push(image);
           history.push({ type: 'add', image: image });
           needsRender = true;
+          estimateDepth(image);
         };
         img.src = e.target.result;
-        console.log(e.target.result);
       };
       reader.readAsDataURL(blob);
       break;
@@ -805,9 +837,7 @@ const onKeyDown = (event) => {
     }
     needsRender = true;
   }
-	if (selectedImage && (event.key === 'Backspace' || event.key === 'Delete')) {
-    deleteSelectedImage(selectedImage);
-  }
+	if (selectedImage && (event.key === 'Backspace' || event.key === 'Delete')) deleteSelectedImage(selectedImage);
 };
 
 const deleteSelectedImage = (image) => {
@@ -821,7 +851,7 @@ const deleteSelectedImage = (image) => {
 }
 
 const onResize = () => {
-  if (resizeRenderer(renderer)) needsRender = true
+  if (resizeRenderer(renderer)) needsRender = true;
 };
 
 const render = () => {
@@ -830,17 +860,10 @@ const render = () => {
     scene.forEach((object) => {
 			object.x += panOffsetX;
 			object.y += panOffsetY;
-			renderImage(renderer, object, object === selectedImage, toolbar, isCropping);
-
-      // Render mask if segmenting and this is the selected image
-      if (isSegmenting && object === selectedImage && object.maskCanvas) {
-        renderMask(renderer, object);
-      }
-
-      // Render crop overlay and handles if cropping and this is the selected image
-      if (isCropping && object === selectedImage) {
-        renderCropOverlay(renderer, object);
-      }
+			renderImage(renderer, object, object === selectedImage, toolbar, isCropping, depthThreshold);
+      if (isSegmenting && object === selectedImage && object.maskCanvas) renderSegmentMask(renderer, object);
+      if (isCropping && object === selectedImage) renderCropOverlay(renderer, object);
+      if (object === selectedImage && isDepthSliderVisible) renderDepthSlider(renderer, object, isDepthSliderVisible, depthThreshold);
 		});
 		panOffsetX = 0;
 		panOffsetY = 0;

@@ -32,6 +32,8 @@ export const createRenderer = (canvas, gl) => {
     image: gl.getUniformLocation(program, 'u_image'),
     color: gl.getUniformLocation(program, 'u_color'),
     flipX: gl.getUniformLocation(program, 'u_flipX'),
+    depthMask: gl.getUniformLocation(program, "is_depthMask"),
+    depthThreshold: gl.getUniformLocation(program, "u_depthThreshold")
   };
   gl.uniform1i(uniforms.image, 0);
 
@@ -88,7 +90,7 @@ export const renderToolbar = (gl, uniforms, toolbar, image) => {
   });
 };
 
-export const renderMask = (renderer, image) => {
+export const renderSegmentMask = (renderer, image) => {
   const { gl, program, vao, uniforms } = renderer;
 
   gl.useProgram(program);
@@ -134,7 +136,7 @@ export const createImage = (renderer, imageElement, x, y) => {
   return { imageElement, texture, x, y, width: imageElement.width, height: imageElement.height, flipped: false };
 };
 
-export const renderImage = (renderer, image, isSelected, toolbar, isCropping) => {
+export const renderImage = (renderer, image, isSelected, toolbar, isCropping, depthThreshold) => {
   const { gl, program, vao, uniforms } = renderer;
 
   gl.useProgram(program);
@@ -144,6 +146,7 @@ export const renderImage = (renderer, image, isSelected, toolbar, isCropping) =>
   gl.uniform2f(uniforms.position, image.x, image.y);
   gl.uniform2f(uniforms.size, image.width / 2, image.height / 2);
   gl.uniform1i(uniforms.flipX, image.flipped ? 1 : 0);
+  gl.uniform1f(uniforms.depthThreshold, depthThreshold);
 
   // Render image
   gl.enable(gl.BLEND);
@@ -156,6 +159,19 @@ export const renderImage = (renderer, image, isSelected, toolbar, isCropping) =>
 
   // Render border if selected
   if (isSelected) {
+    if (image.depthMaskCanvas) {
+      gl.activeTexture(gl.TEXTURE1);
+      const depthMaskTexture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, depthMaskTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image.depthMaskCanvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.uniform1i(uniforms.depthMask, 1);
+    } else {
+      gl.uniform1i(uniforms.depthMask, 0);
+    }
+  
     gl.uniform1i(uniforms.isImage, 0);
     gl.uniform4fv(uniforms.color, [1, 0.8, 0, 1]);
 
@@ -266,5 +282,29 @@ export const renderCropOverlay = (renderer, image) => {
 
   // Disable blending after rendering the overlay and handles
   gl.disable(gl.BLEND);
+  gl.bindVertexArray(null);
+};
+
+export const renderDepthSlider = (renderer, image, isDepthSliderVisible, depthThreshold) => {
+  if (!isDepthSliderVisible || !image.depthData) return;
+
+  const { gl, program, vao, uniforms } = renderer;
+
+  gl.useProgram(program);
+  gl.bindVertexArray(vao);
+
+  // Render slider background
+  gl.uniform1i(uniforms.isImage, 0);
+  gl.uniform4fv(uniforms.color, [0.5, 0.5, 0.5, 1]);
+  gl.uniform2f(uniforms.position, image.x, image.y + image.height / 2 + 20);
+  gl.uniform2f(uniforms.size, image.width / 2, 5);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  // Render slider handle
+  gl.uniform4fv(uniforms.color, [1, 1, 1, 1]);
+  gl.uniform2f(uniforms.position, image.x - image.width / 2 + depthThreshold * image.width, image.y + image.height / 2 + 20);
+  gl.uniform2f(uniforms.size, 10, 10);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
   gl.bindVertexArray(null);
 };
