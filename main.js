@@ -33,26 +33,21 @@ let panOffsetY = 0;
 let isCropping = false;
 let isDraggingCropHandle = false;
 let selectedCropHandle = null;
-
 // SAM State variables
 let isSegmenting = false;
 let currentMask = null;
 let isDecoding = false;
 let isEmbeddingInProgress = false;
-
 // DPT State variables
 let isSliderDragging = false;
 let isDepthSliderVisible = false;
-let depthThreshold = 0.0;
 
 dptworker.onmessage = (e) => {
   const { type, data, imageId } = e.data;
-  if (type === 'ready') {
-    console.log('Depth estimation worker is ready');
-  } else if (type === 'depth_result') {
-    if (data === 'start') {
-      console.log('Starting depth estimation');
-    } else {
+  if (type === 'ready') console.log('Depth estimation worker is ready');
+  else if (type === 'depth_result') {
+    if (data === 'start') console.log('Starting depth estimation');
+    else {
       console.log('Depth estimation complete');
       const image = scene.find(img => img.id === imageId);
       if (image) {
@@ -64,17 +59,14 @@ dptworker.onmessage = (e) => {
   } else if (type === 'error') {
     console.error('Error in depth estimation:', data);
     const image = scene.find(img => img.id === imageId);
-    if (image) {
-      image.isEstimatingDepth = false;
-    }
+    if (image) image.isEstimatingDepth = false;
   }
 };
 
 worker.onmessage = (e) => {
   const { type, data } = e.data;
-  if (type === 'ready') {
-    console.log('model loaded!');
-  } else if (type === 'segment_result') {
+  if (type === 'ready') console.log('model loaded!');
+  else if (type === 'segment_result') {
     if (data === 'start') {
       console.log('extracting image embedding...');
       isEmbeddingInProgress = true;
@@ -85,9 +77,7 @@ worker.onmessage = (e) => {
       document.body.style.cursor = 'default';
       needsRender = true;
     }
-  } else if (type === 'decode_result') {
-    handleDecodeResult(data);
-  }
+  } else if (type === 'decode_result') handleDecodeResult(data);
 };
 
 export const init = () => {
@@ -112,6 +102,7 @@ export const init = () => {
 				scene.push(image);
 				history.push({ type: 'add', image: image });
 				needsRender = true;
+        estimateDepth(image);
 			};
 			img.src = reader.result;
 		};
@@ -182,9 +173,7 @@ const handleDecodeResult = (data) => {
   const numMasks = scores.length;
   let bestIndex = 0;
   for (let i = 1; i < numMasks; ++i) {
-    if (scores[i] > scores[bestIndex]) {
-      bestIndex = i;
-    }
+    if (scores[i] > scores[bestIndex]) bestIndex = i;
   }
 
   const pixelData = imageData.data;
@@ -239,19 +228,16 @@ const estimateDepth = (image) => {
 
 const applyDepthMask = (image) => {
   if (!image.depthData) return;
-  const depth = image.depthData;
-  const { data, width, height } = depth;
+  const { data, width, height } = image.depthData;
 
   const [depthMaskCanvas, depthMaskCtx] = createTempCanvas(width, height);
   const depthMaskImageData = depthMaskCtx.createImageData(depthMaskCanvas.width, depthMaskCanvas.height);
 
   const depthValues = Object.values(data);
-  const minDepth = Math.min(...depthValues);
-  const maxDepth = Math.max(...depthValues);
-  const range = maxDepth - minDepth;
+  const [minDepth, maxDepth] = depthValues.reduce(([min, max], val) => [Math.min(min, val), Math.max(max, val)], [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]);
   
   for (let i = 0; i < depthValues.length; i++) {
-    const normalizedDepth = (depthValues[i] - minDepth) / range;
+    const normalizedDepth = (depthValues[i] - minDepth) / (maxDepth - minDepth);
     depthMaskImageData.data[i * 4] = normalizedDepth * 255;
     depthMaskImageData.data[i * 4 + 1] = normalizedDepth * 255;
     depthMaskImageData.data[i * 4 + 2] = normalizedDepth * 255;
@@ -314,16 +300,13 @@ const handleInteraction = (x, y, isStart) => {
       const clickedButton = getClickedButton(x, y, toolbar, selectedImage);
       switch (clickedButton) {
         case 0: // Move back
-          console.log("move back button clicked!!");
           const index = scene.indexOf(selectedImage);
           scene.unshift(scene.splice(index, 1)[0]);
           break;
         case 1: // Flip horizontally
-          console.log("flip button clicked!!");
           flipImageHorizontally(selectedImage);
           break;
         case 2: // Duplicate
-          console.log("duplicate button clicked!!");
           const dupImage = { ...selectedImage, x: selectedImage.x + 20, y: selectedImage.y + 20 };
           scene.push(dupImage);
           history.push({ type: 'add', image: dupImage });
@@ -331,11 +314,9 @@ const handleInteraction = (x, y, isStart) => {
           needsRender = true;
           break;
         case 3: // Segment
-          console.log("segmentation button clicked!");
           segmentImage(selectedImage);
           break;
         case 4: // Download
-          console.log("download button clicked");
           const [canvas, ctx] = createTempCanvas(selectedImage.width, selectedImage.height);
           ctx.drawImage(selectedImage.imageElement, 0, 0, canvas.width, canvas.height);
           const dataURL = canvas.toDataURL('image/png');
@@ -347,11 +328,9 @@ const handleInteraction = (x, y, isStart) => {
           document.body.removeChild(a);
           break;
         case 5: // Delete
-          console.log("delete button clicked");
           deleteSelectedImage(selectedImage);
           break;
         case 6: // Crop
-          console.log("crop button clicked");
           isCropping = !isCropping;
           console.log(isCropping);
           if (isCropping) {
@@ -361,9 +340,7 @@ const handleInteraction = (x, y, isStart) => {
               width: selectedImage.width,
               height: selectedImage.height,
             };
-          } else {
-            cropImage(selectedImage);
-          }
+          } else cropImage(selectedImage);
           break;
         case 7: // Depth Estimation
           isDepthSliderVisible = !isDepthSliderVisible;
@@ -485,9 +462,7 @@ const cropImage = (image) => {
     croppedImageObject.width = cropArea.width;
     croppedImageObject.height = cropArea.height;
     const index = scene.indexOf(image);
-    if (index !== -1) {
-      scene.splice(index, 1, croppedImageObject);
-    }
+    if (index !== -1) scene.splice(index, 1, croppedImageObject);
     history.push({ type: 'delete', image, index });
 
     selectedImage = croppedImageObject;
@@ -496,18 +471,16 @@ const cropImage = (image) => {
   croppedImage.src = croppedCanvas.toDataURL();
 };
 
-const getCropHandle = (cropArea) => {
-  return [
-    { x: cropArea.x, y: cropArea.y, type: 'nw' },
-    { x: cropArea.x + cropArea.width, y: cropArea.y, type: 'ne' },
-    { x: cropArea.x, y: cropArea.y + cropArea.height, type: 'sw' },
-    { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height, type: 'se' },
-    { x: cropArea.x + cropArea.width / 2, y: cropArea.y, type: 'n' },
-    { x: cropArea.x + cropArea.width / 2, y: cropArea.y + cropArea.height, type: 's' },
-    { x: cropArea.x, y: cropArea.y + cropArea.height / 2, type: 'w' },
-    { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height / 2, type: 'e' },
-  ];
-}
+const getCropHandle = (cropArea) => [
+  { x: cropArea.x, y: cropArea.y, type: 'nw' },
+  { x: cropArea.x + cropArea.width, y: cropArea.y, type: 'ne' },
+  { x: cropArea.x, y: cropArea.y + cropArea.height, type: 'sw' },
+  { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height, type: 'se' },
+  { x: cropArea.x + cropArea.width / 2, y: cropArea.y, type: 'n' },
+  { x: cropArea.x + cropArea.width / 2, y: cropArea.y + cropArea.height, type: 's' },
+  { x: cropArea.x, y: cropArea.y + cropArea.height / 2, type: 'w' },
+  { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height / 2, type: 'e' },
+];
 
 const onTouchMove = (event) => {
   event.preventDefault();
@@ -527,9 +500,7 @@ const onTouchStart = (event) => {
     const rect = event.target.getBoundingClientRect();
     mouseX = touch.clientX - rect.left;
     mouseY = touch.clientY - rect.top;
-    if (handleInteraction(mouseX, mouseY, true)) {
-      event.preventDefault();
-    }
+    if (handleInteraction(mouseX, mouseY, true)) event.preventDefault();
   }
 };
 
@@ -539,14 +510,7 @@ const onTouchEnd = (event) => {
   isResizing = false;
   if (selectedImage && (selectedImage.x !== selectedImage.initialX || selectedImage.y !== selectedImage.initialY ||
       selectedImage.width !== selectedImage.initialWidth || selectedImage.height !== selectedImage.initialHeight)) {
-    history.push({ 
-      type: 'move_resize', 
-      image: selectedImage, 
-      fromX: selectedImage.initialX, 
-      fromY: selectedImage.initialY,
-      fromWidth: selectedImage.initialWidth,
-      fromHeight: selectedImage.initialHeight
-    });
+    history.push({ type: 'move_resize', image: selectedImage, fromX: selectedImage.initialX, fromY: selectedImage.initialY, fromWidth: selectedImage.initialWidth, fromHeight: selectedImage.initialHeight });
   }
   document.body.style.cursor = 'default';
 };
@@ -554,10 +518,7 @@ const onTouchEnd = (event) => {
 const getPoint = (x, y, image) => {
   const mouseX = (x - image.x + image.width / 2) / image.width;
   const mouseY = (y - image.y + image.height / 2) / image.height;
-  return {
-    point: [mouseX, mouseY],
-    label: 1,
-  };
+  return { point: [mouseX, mouseY], label: 1 };
 };
 
 const onMouseMove = (event) => {
@@ -571,21 +532,15 @@ const onMouseMove = (event) => {
     const sliderWidth = selectedImage.width;
     const sliderHeight = 20;
     if (isSliderDragging) {
-      depthThreshold = Math.max(0, Math.min(1, (mouseX - sliderX) / sliderWidth));
-      applyDepthMask(selectedImage, depthThreshold);
+      selectedImage.depthThreshold = Math.max(0, Math.min(1, (mouseX - sliderX) / sliderWidth));
+      applyDepthMask(selectedImage);
       needsRender = true;
-    } else if (mouseX >= sliderX && mouseX <= sliderX + sliderWidth &&
-               mouseY >= sliderY - sliderHeight / 2 && mouseY <= sliderY + sliderHeight / 2) {
-      document.body.style.cursor = 'pointer';
-    }
+    } else if (mouseX >= sliderX && mouseX <= sliderX + sliderWidth && mouseY >= sliderY - sliderHeight / 2 && mouseY <= sliderY + sliderHeight / 2) document.body.style.cursor = 'pointer';
   }
 
   if (isCropping && selectedImage) {
-    if (getCropHandle(selectedImage.cropArea).some((handle) => Math.abs(mouseX - handle.x) < handleSize && Math.abs(mouseY - handle.y) < handleSize)) {
-      document.body.style.cursor = 'move';
-    } else {
-      document.body.style.cursor = 'default';
-    }
+    if (getCropHandle(selectedImage.cropArea).some((handle) => Math.abs(mouseX - handle.x) < handleSize && Math.abs(mouseY - handle.y) < handleSize)) document.body.style.cursor = 'move';
+    else document.body.style.cursor = 'default';
 
     if (isDraggingCropHandle) {
       const dx = mouseX - lastMouseX;
@@ -637,9 +592,8 @@ const onMouseMove = (event) => {
     needsRender = true;
   }
 
-  if (isEmbeddingInProgress) {
-    document.body.style.cursor = 'wait';
-  } else if (selectedImage && isPointInToolbar(mouseX, mouseY, toolbar, selectedImage)) {
+  if (isEmbeddingInProgress) document.body.style.cursor = 'wait';
+  else if (selectedImage && isPointInToolbar(mouseX, mouseY, toolbar, selectedImage)) {
     const i = getClickedButton(mouseX, mouseY, toolbar, selectedImage)
     document.body.style.cursor = 'pointer';
     needsRender = true;
@@ -664,16 +618,10 @@ const onMouseMove = (event) => {
           document.body.style.cursor = 'ew-resize';
           break;
       }
-    } else if (isDragging) {
-      document.body.style.cursor = 'grabbing';
-    } else if (getImageAtPosition(mouseX, mouseY)) {
-      document.body.style.cursor = 'grab';
-    } else {
-      document.body.style.cursor = 'default';
-    }
-  } else {
-    document.body.style.cursor = 'default';
-  }
+    } else if (isDragging) document.body.style.cursor = 'grabbing';
+    else if (getImageAtPosition(mouseX, mouseY)) document.body.style.cursor = 'grab';
+    else document.body.style.cursor = 'default';
+  } else document.body.style.cursor = 'default';
 
   handleInteraction(mouseX, mouseY, false);
 };
@@ -688,11 +636,10 @@ const onMouseDown = (event) => {
     const sliderY = selectedImage.y + selectedImage.height / 2 + 20;
     const sliderWidth = selectedImage.width;
     const sliderHeight = 20;
-    if (mouseX >= sliderX && mouseX <= sliderX + sliderWidth &&
-        mouseY >= sliderY - sliderHeight / 2 && mouseY <= sliderY + sliderHeight / 2) {
+    if (mouseX >= sliderX && mouseX <= sliderX + sliderWidth && mouseY >= sliderY - sliderHeight / 2 && mouseY <= sliderY + sliderHeight / 2) {
       isSliderDragging = true;
-      depthThreshold = Math.max(0, Math.min(1, (mouseX - sliderX) / sliderWidth));
-      applyDepthMask(selectedImage, depthThreshold);
+      selectedImage.depthThreshold = Math.max(0, Math.min(1, (mouseX - sliderX) / sliderWidth));
+      applyDepthMask(selectedImage);
       needsRender = true;
       event.preventDefault();
       return;
@@ -860,10 +807,10 @@ const render = () => {
     scene.forEach((object) => {
 			object.x += panOffsetX;
 			object.y += panOffsetY;
-			renderImage(renderer, object, object === selectedImage, toolbar, isCropping, depthThreshold);
+			renderImage(renderer, object, object === selectedImage, toolbar, isCropping);
       if (isSegmenting && object === selectedImage && object.maskCanvas) renderSegmentMask(renderer, object);
       if (isCropping && object === selectedImage) renderCropOverlay(renderer, object);
-      if (object === selectedImage && isDepthSliderVisible) renderDepthSlider(renderer, object, isDepthSliderVisible, depthThreshold);
+      if (object === selectedImage && isDepthSliderVisible) renderDepthSlider(renderer, object, isDepthSliderVisible);
 		});
 		panOffsetX = 0;
 		panOffsetY = 0;

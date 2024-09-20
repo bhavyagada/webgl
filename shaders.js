@@ -42,8 +42,8 @@ export const imageFragmentShader = `#version 300 es
       vec4 color = texture(u_image, v_texCoord);
       if (is_depthMask) {
         vec4 depthMaskColor = texture(u_depthMask, v_texCoord);
-        float depth = (depthMaskColor.r + depthMaskColor.g + depthMaskColor.b) / 3.0;
-        if (depth < u_depthThreshold) {
+        float depth = depthMaskColor.r;
+        if (depth <= u_depthThreshold) {
           discard;
         }
       }
