@@ -27,6 +27,7 @@ export class SegmentAnythingSingleton {
 let image_embeddings = null;
 let image_inputs = null;
 let ready = false;
+let cache = new Map();
 
 self.onmessage = async (e) => {
   const [model, processor] = await SegmentAnythingSingleton.getInstance();
@@ -36,10 +37,14 @@ self.onmessage = async (e) => {
     self.postMessage({ type: 'ready' });
   }
 
-  const { type, data } = e.data;
+  const { type, data, id } = e.data;
   if (type === 'segment') {
+    if (cache.has(id)) {
+      self.postMessage({ type: 'decode_result', data: cache.get(id), id });
+      return;
+    }
     // Indicate that we are starting to segment the image
-    self.postMessage({ type: 'segment_result', data: 'start' });
+    self.postMessage({ type: 'segment_result', data: 'start', id });
 
     // Read the image and recompute image embeddings
     const image = await RawImage.read(e.data.data);
@@ -47,7 +52,7 @@ self.onmessage = async (e) => {
     image_embeddings = await model.get_image_embeddings(image_inputs)
 
     // Indicate that we have computed the image embeddings, and we are ready to accept decoding requests
-    self.postMessage({ type: 'segment_result', data: 'done' });
+    self.postMessage({ type: 'segment_result', data: 'done', id });
   } else if (type === 'decode') {
     // Prepare inputs for decoding
     const reshaped = image_inputs.reshaped_input_sizes[0];
@@ -62,9 +67,10 @@ self.onmessage = async (e) => {
 
     // Post-process the mask
     const masks = await processor.post_process_masks(outputs.pred_masks, image_inputs.original_sizes, image_inputs.reshaped_input_sizes);
-
+    cache.clear();
+    cache.set(id, { mask: RawImage.fromTensor(masks[0][0]), scores: outputs.iou_scores.data });
     // Send the result back to the main thread
-    self.postMessage({ type: 'decode_result', data: { mask: RawImage.fromTensor(masks[0][0]), scores: outputs.iou_scores.data } });
+    self.postMessage({ type: 'decode_result', data: { mask: RawImage.fromTensor(masks[0][0]), scores: outputs.iou_scores.data }, id });
   } else {
     throw new Error(`Unknown message type: ${type}`);
   }

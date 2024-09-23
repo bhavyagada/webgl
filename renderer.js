@@ -134,7 +134,7 @@ export const createImage = (renderer, imageElement, x, y) => {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imageElement);
 
-  return { imageElement, texture, x, y, width: imageElement.width, height: imageElement.height, flipped: false, depthThreshold: 0.0 };
+  return { id: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15), imageElement, texture, x, y, width: imageElement.width, height: imageElement.height, flipped: false, depthThreshold: 0.0 };
 };
 
 export const renderImage = (renderer, image, isSelected, toolbar, isCropping) => {

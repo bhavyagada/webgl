@@ -193,20 +193,19 @@ const handleDecodeResult = (data) => {
   isDecoding = false;
 };
 
-const segmentImage = async (image) => {
+const segmentImage = async () => {
   if (!worker) {
     console.error('model not loaded');
     return;
   }
   isSegmenting = true;
 
-  const [canvas, ctx] = createTempCanvas(image.width, image.height);
-  image.imageElement.width = canvas.width;
-  image.imageElement.height = canvas.height;
-  ctx.drawImage(image.imageElement, 0, 0, canvas.width, canvas.height);
+  const [canvas, ctx] = createTempCanvas(selectedImage.width, selectedImage.height);
+  selectedImage.imageElement.width = canvas.width;
+  selectedImage.imageElement.height = canvas.height;
+  ctx.drawImage(selectedImage.imageElement, 0, 0, canvas.width, canvas.height);
   const dataURL = canvas.toDataURL();
-
-  worker.postMessage({ type: 'segment', data: dataURL });
+  worker.postMessage({ type: 'segment', data: dataURL, id: selectedImage.id });
 };
 
 const estimateDepth = (image) => {
@@ -314,7 +313,7 @@ const handleInteraction = (x, y, isStart) => {
           needsRender = true;
           break;
         case 3: // Segment
-          segmentImage(selectedImage);
+          segmentImage();
           break;
         case 4: // Download
           const [canvas, ctx] = createTempCanvas(selectedImage.width, selectedImage.height);
@@ -588,7 +587,7 @@ const onMouseMove = (event) => {
   if (isSegmenting && selectedImage && !isDecoding) {
     isDecoding = true;
     const point = getPoint(mouseX, mouseY, selectedImage);
-    worker.postMessage({ type: 'decode', data: [point] });
+    worker.postMessage({ type: 'decode', data: [point], id: selectedImage.id });
     needsRender = true;
   }
 
@@ -655,7 +654,7 @@ const onMouseDown = (event) => {
 
   if (isSegmenting && selectedImage) {
     const point = getPoint(mouseX, mouseY, selectedImage);
-    worker.postMessage({ type: 'decode', data: [point] });
+    worker.postMessage({ type: 'decode', data: [point], id: selectedImage.id });
     cutMask();
     isSegmenting = false;
   } else if (handleInteraction(mouseX, mouseY, true)) {
