@@ -24,36 +24,41 @@ export class SegmentAnythingSingleton {
 }
 
 // State variables
+let state = 'initializing'; // 'initializing', 'ready', 'processing'
 let image_embeddings = null;
 let image_inputs = null;
-let ready = false;
 let cache = new Map();
+let requestQueue = [];
 
-self.onmessage = async (e) => {
-  const [model, processor] = await SegmentAnythingSingleton.getInstance();
-  if (!ready) {
-    // Indicate that we are ready to accept requests
-    ready = true;
-    self.postMessage({ type: 'ready' });
+async function processQueue() {
+  if (requestQueue.length > 0 && state === 'ready') {
+    state = 'processing';
+    const request = requestQueue.shift();
+    await handleRequest(request);
+    state = 'ready';
+    processQueue();
   }
+}
 
-  const { type, data, id } = e.data;
+async function handleRequest(request) {
+  const { type, data, id } = request;
+  const [model, processor] = await SegmentAnythingSingleton.getInstance();
+
   if (type === 'segment') {
     if (cache.has(id)) {
       self.postMessage({ type: 'decode_result', data: cache.get(id), id });
       return;
     }
-    // Indicate that we are starting to segment the image
     self.postMessage({ type: 'segment_result', data: 'start', id });
-
-    // Read the image and recompute image embeddings
-    const image = await RawImage.read(e.data.data);
+    const image = await RawImage.read(data);
     image_inputs = await processor(image);
-    image_embeddings = await model.get_image_embeddings(image_inputs)
-
-    // Indicate that we have computed the image embeddings, and we are ready to accept decoding requests
+    image_embeddings = await model.get_image_embeddings(image_inputs);
     self.postMessage({ type: 'segment_result', data: 'done', id });
   } else if (type === 'decode') {
+    if (!image_inputs || !image_embeddings) {
+      self.postMessage({ type: 'error', data: 'Image not segmented yet', id });
+      return;
+    }
     // Prepare inputs for decoding
     const reshaped = image_inputs.reshaped_input_sizes[0];
     const points = data.map(x => [x.point[0] * reshaped[1], x.point[1] * reshaped[0]])
@@ -69,9 +74,19 @@ self.onmessage = async (e) => {
     const masks = await processor.post_process_masks(outputs.pred_masks, image_inputs.original_sizes, image_inputs.reshaped_input_sizes);
     cache.clear();
     cache.set(id, { mask: RawImage.fromTensor(masks[0][0]), scores: outputs.iou_scores.data });
-    // Send the result back to the main thread
     self.postMessage({ type: 'decode_result', data: { mask: RawImage.fromTensor(masks[0][0]), scores: outputs.iou_scores.data }, id });
   } else {
-    throw new Error(`Unknown message type: ${type}`);
+    self.postMessage({ type: 'error', data: `Unknown message type: ${type}`, id });
   }
 }
+
+self.onmessage = async (e) => {
+  if (state === 'initializing') {
+    await SegmentAnythingSingleton.getInstance();
+    state = 'ready';
+    self.postMessage({ type: 'ready' });
+  }
+
+  requestQueue.push(e.data);
+  processQueue();
+};

@@ -79,15 +79,48 @@ export const renderToolbar = (gl, uniforms, toolbar, image) => {
 
   toolbar.buttonTextures.forEach((texture, index) => {
     const toolbarX = image.x - (toolbar.buttonTextures.length * toolbar.buttonWidth) / 2 + index * toolbar.buttonWidth;
+    const centerX = toolbarX + toolbar.buttonWidth / 2;
+    const centerY = toolbarY + toolbar.buttonHeight / 2;
 
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.uniform1i(uniforms.isImage, 1);
-    gl.uniform2f(uniforms.position, toolbarX + toolbar.buttonWidth / 2, toolbarY + toolbar.buttonHeight / 2);
+    // Render button background
+    gl.uniform1i(uniforms.isImage, 0);
+    gl.uniform4fv(uniforms.color, [1, 1, 1, 1]);
+    gl.uniform2f(uniforms.position, centerX, centerY);
     gl.uniform2f(uniforms.size, toolbar.buttonWidth / 2, toolbar.buttonHeight / 2);
-    gl.uniform1i(uniforms.flipX, 0);
-
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    if ((index === 0 && image.isEstimatingDepth) || (index === 1 && image.isEmbeddingInProgress)) {
+      // Render loading animation
+      const time = performance.now() / 1000;
+      const radius = Math.min(toolbar.buttonWidth, toolbar.buttonHeight) * 0.3;
+      const lineWidth = Math.min(toolbar.buttonWidth, toolbar.buttonHeight) * 0.05;
+      const segments = 32;
+      const angleStep = (Math.PI * 2) / segments;
+
+      for (let i = 0; i < segments; i++) {
+        const angle = i * angleStep + time * 5;
+        const endAngle = angle + angleStep * 0.8;
+        const [startX, startY] = [Math.cos(angle) * radius, Math.sin(angle) * radius];
+        const [endX, endY] = [Math.cos(endAngle) * radius, Math.sin(endAngle) * radius];
+        const [midX, midY] = [(startX + endX) / 2, (startY + endY) / 2];
+        const [dirX, dirY] = [endX - startX, endY - startY];
+        const length = Math.sqrt(dirX * dirX + dirY * dirY);
+
+        gl.uniform2f(uniforms.position, centerX + midX, centerY + midY);
+        gl.uniform2f(uniforms.size, length / 2, lineWidth / 2);
+        gl.uniform4fv(uniforms.color, [0, 0, 0, Math.max(0, Math.sin(i / segments * Math.PI))]);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+    } else {
+      // Render button icon
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.uniform1i(uniforms.isImage, 1);
+      gl.uniform2f(uniforms.position, centerX, centerY);
+      gl.uniform2f(uniforms.size, toolbar.buttonWidth / 2, toolbar.buttonHeight / 2);
+      gl.uniform1i(uniforms.flipX, 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
   });
 };
 
@@ -134,7 +167,7 @@ export const createImage = (renderer, imageElement, x, y) => {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imageElement);
 
-  return { id: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15), imageElement, texture, x, y, width: imageElement.width, height: imageElement.height, flipped: false, depthThreshold: 0.0 };
+  return { id: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15), imageElement, texture, x, y, width: imageElement.width, height: imageElement.height, flipped: false, depthThreshold: 0.0, isEstimatingDepth: false, isEmbeddingInProgress: false };
 };
 
 export const renderImage = (renderer, image, isSelected, toolbar, isCropping) => {

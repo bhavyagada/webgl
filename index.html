@@ -19,6 +19,18 @@
       .container { 
         position: relative;
       }
+      .tooltip {
+        position: fixed;
+        z-index: 1000;
+        background-color: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-size: 14px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
       #feats-overlay {
         position: absolute;
         left: 10px;
@@ -39,14 +51,16 @@
     <script>0</script>
     <div class="container">
       <canvas id="c"></canvas>
+      <div id="tooltip" class="tooltip"></div>
       <div id="feats-overlay">
+        <div class="icon-text"><img src="./icons/dpt.svg" width="15" height="15"> depthwise BG removal</div>
+        <div class="icon-text"><img src="./icons/segment.svg" width="15" height="15"> segment</div>
         <div class="icon-text"><img src="./icons/moveback.svg" width="15" height="15"> move to back</div>
         <div class="icon-text"><img src="./icons/flip.svg" width="15" height="15"> flip</div>
         <div class="icon-text"><img src="./icons/duplicate.svg" width="15" height="15"> duplicate</div>
-        <div class="icon-text"><img src="./icons/segment.svg" width="15" height="15"> segment</div>
+        <div class="icon-text"><img src="./icons/crop.svg" width="15" height="15"> crop</div>
         <div class="icon-text"><img src="./icons/download.svg" width="15" height="15"> download</div>
         <div class="icon-text"><img src="./icons/delete.svg" width="15" height="15"> delete</div>
-        <div class="icon-text"><img src="./icons/crop.svg" width="15" height="15"> crop</div>
       </div>
     </div>
     <script type="module" src="/main.js" defer></script>
